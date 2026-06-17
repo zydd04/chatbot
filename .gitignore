@@ -4,7 +4,9 @@
 .env.local  
 \*.env
 /venv
-
+package-lock.json
+package.json
+frontend/node_modules
 ### \--- Local Vector Database Storage ---
 
 \*\*/my\_vector\_db/  
