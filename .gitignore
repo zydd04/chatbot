@@ -1,0 +1,45 @@
+### \--- Environment & Configuration ---
+
+.env  
+.env.local  
+.env.\*.local  
+\*.env
+
+### \--- Local Vector Database Storage ---
+
+### Prevents committing your private embedded data documents
+
+my\_vector\_db/  
+chroma.sqlite3
+
+### \--- Python Backend Dependencies & Cache ---
+
+**pycache**/  
+\*.pyc  
+\*.pyo  
+\*.pyd  
+.Python  
+env/  
+venv/  
+.venv  
+pip-log.txt  
+pip-delete-this-directory.txt
+
+### \--- Node.js Frontend Dependencies & Build ---
+
+node\_modules/  
+/dist  
+/build  
+.eslintcache  
+.vite
+
+### \--- OS & IDE Metadata ---
+
+.DS\_Store  
+.idea/  
+.vscode/  
+\*.suo  
+*.ntvs*  
+\*.njsproj  
+\*.sln  
+\*.swp
