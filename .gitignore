@@ -22,7 +22,7 @@
 \*\*/.venv  
 \*\*/Lib/  
 \*\*/site-packages/
-
+frontend/node_modules/
 ### \--- Node.js Frontend Dependencies & Build ---
 
 \*\*/node\_modules/  
