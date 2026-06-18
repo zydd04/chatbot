@@ -3,7 +3,7 @@
 .env  
 .env.local  
 \*.env
-/venv
+backend/venv
 frontend/node_modules/
 ### \--- Local Vector Database Storage ---
 
