@@ -5,11 +5,13 @@
 \*.env
 backend/venv
 frontend/node_modules/
+db/
 ### \--- Local Vector Database Storage ---
 
 \*\*/my\_vector\_db/  
 \*\*/my\_lance\_db/  
 \*\*/chroma.sqlite3
+
 
 ### \--- Python Backend Dependencies & Cache ---
 
