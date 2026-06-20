@@ -73,12 +73,12 @@ jupyter_client==8.6.3
 jupyter_core==5.8.1
 kiwisolver==1.4.9
 kubernetes==33.1.0
-langchain==0.3.27
-langchain-chroma==0.2.5
-langchain-community==0.3.29
-langchain-core=0.3.74
+langchain==0.3.25
+langchain-chroma==0.2.4
+langchain-community==0.3.23
+langchain-core==0.3.59
 langchain-text-splitters==0.3.11
-langchain_huggingface=1.2.2
+langchain-huggingface==0.1.2 sentence-transformers
 langdetect==1.0.9
 langsmith==0.4.25
 lxml==6.0.1

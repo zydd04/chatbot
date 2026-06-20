@@ -1,6 +1,6 @@
 import os
 from langchain_community.document_loaders import TextLoader, DirectoryLoader
-from langchain_text_splitters import CharacterTextSplitter 
+from langchain_text_splitters import RecursiveCharacterTextSplitter 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from dotenv import load_dotenv
@@ -32,7 +32,7 @@ def load_docs(doc_path="docs"):
 def split_docs(docs, chunk_size=1000, chunk_overlap=0):
 
     print("Generating chunks ...")
-    text_split = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    text_split = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     chunks = text_split.split_documents(docs)
 
     if chunks:
