@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+#History
+chat_history = []
+
 per_dir = "db/chromadb"
 embedding_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 db = Chroma(
@@ -14,34 +17,50 @@ db = Chroma(
     collection_metadata={"hnsw:space": "cosine"}
 )
 
-query = input("Ask your Question: ")
+#Query
+while True:
+    query = input("Ask your Question: ")
+    if query.lower() == "exit":
+        break
 
-#retrieve the docs
-base_retriever = db.as_retriever(search_kwargs={"k": 8})
-candidate_docs = base_retriever.invoke(query)
+    #retrieve the docs
+    base_retriever = db.as_retriever(search_kwargs={"k": 8})
+    candidate_docs = base_retriever.invoke(query)
 
-#Reranking the candidate docs
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-pairs = [[query, doc.page_content] for doc in candidate_docs]
-scores = reranker.predict(pairs)
+    #Reranking the candidate docs
+    reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    pairs = [[query, doc.page_content] for doc in candidate_docs]
+    scores = reranker.predict(pairs)
 
-ranked = sorted(zip(scores, candidate_docs), key=lambda x: x[0], reverse=True)
-top_docs = [doc for _, doc in ranked[:3]]
+    ranked = sorted(zip(scores, candidate_docs), key=lambda x: x[0], reverse=True)
+    top_docs = [doc for _, doc in ranked[:3]]
 
-#LLM implementatiom
-def generate_answer(query, docs):
-    context = "\n\n".join([f"[Source {i+1}]: {doc.page_content}" for i, doc in enumerate(docs)])
-    prompt = f"""Answer using ONLY the context below.
-    If the answer isn't there, say "I don't have enough information."
-    Context:
-    {context}
-    Question: {query}
-    Answer:"""
-    response = ollama.chat(
+    #LLM implementatiom
+    def generate_answer(query, docs):
+        context = "\n\n".join([f"[Source {i+1}]: {doc.page_content}" for i, doc in enumerate(docs)])
+        prompt = f"""Answer using ONLY the context below.
+        If the answer isn't there, say "I don't have enough information."
+        Context:
+        {context}"""
+        if chat_history:
+            messages = [{"role": "system", "content": prompt}]
+            messages.extend(chat_history[-20:])
+            messages.append({"role": "user", "content": query})
+        else:
+            messages = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": query}
+            ]
+        response = ollama.chat(
         model="llama3.2:1b",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.message.content
+        messages=messages
+        )
+        return response.message.content
 
-answer = generate_answer(query, top_docs)
-print(f"Response: {answer}")
+    answer = generate_answer(query, top_docs)
+ 
+    # Save to history
+    chat_history.append({"role": "user", "content": query})
+    chat_history.append({"role": "assistant", "content": answer})
+
+    print(f"\nAssistant: {answer}\n")
