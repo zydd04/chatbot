@@ -105,13 +105,11 @@ def load_db():
     )
 
 
-def rebuild_db():
-    global db
+def add_file_to_db(path):
+    docs = load_file(path)
+    chunks = split_docs(docs)
 
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
-
-    db = build_db()
+    db.add_documents(chunks)
 
 ##STARTUP...
 
