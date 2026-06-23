@@ -6,6 +6,7 @@
 backend/venv
 frontend/node_modules/
 db/
+__pycache__/
 ### \--- Local Vector Database Storage ---
 
 \*\*/my\_vector\_db/  

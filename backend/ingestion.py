@@ -3,9 +3,8 @@ from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from dotenv import load_dotenv
 
-load_dotenv()
+
 
 #Function For Load Files
 def load_docs(doc_path="docs"):
