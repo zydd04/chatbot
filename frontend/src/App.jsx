@@ -119,6 +119,22 @@ export default function App() {
               return updated;
             });
           }
+          //bug fix
+          if (data.type === "done") {
+            setHistory((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+
+            if (last?.role === "assistant") {
+                updated[updated.length - 1] = {
+                    ...last,
+                streaming: false,
+                };
+            }
+
+            return updated;
+        });
+    }
         }
       }
     } catch (error) {
