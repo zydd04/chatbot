@@ -112,3 +112,120 @@ def rebuild_db():
         shutil.rmtree(DB_PATH)
 
     db = build_db()
+
+##STARTUP...
+
+@app.on_event("startup")
+def startup():
+    global db
+
+    if os.path.exists(DB_PATH):
+        db = load_db()
+    else:
+        db = build_db()
+
+##Retrieve + Rerank
+def retrieve(query: str):
+    retriever = db.as_retriever(search_kwargs={"k": 8})
+    docs = retriever.invoke(query)
+
+    pairs = [[query, d.page_content] for d in docs]
+    scores = reranker.predict(pairs)
+
+    ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
+
+    return [d for _, d in ranked[:3]]
+
+##Chat...
+@app.post("/chat")
+async def chat(req: ChatRequest):
+
+    docs = retrieve(req.message)
+
+    context = "\n\n".join(
+        f"[Source {i+1}]\n{d.page_content}"
+        for i, d in enumerate(docs)
+    )
+
+    system = f"""
+You are a strict RAG assistant.
+
+Use ONLY the context below.
+
+If answer is not in context say:
+"I don't have enough information."
+
+Context:
+{context}
+"""
+
+    messages = [{"role": "system", "content": system}]
+
+    for m in req.history[-20:]:
+        messages.append({"role": m.role, "content": m.content})
+
+    messages.append({"role": "user", "content": req.message})
+
+    def stream():
+        response = ollama.chat(
+            model="llama3.2:1b",
+            messages=messages,
+            stream=True
+        )
+
+        for chunk in response:
+            text = chunk["message"]["content"]
+
+            yield json.dumps({
+                "type": "chunk",
+                "text": text
+            }) + "\n"
+
+        yield json.dumps({
+            "type": "sources",
+            "sources": [
+                {
+                    "file": d.metadata.get("source", "unknown"),
+                    "preview": d.page_content[:200]
+                }
+                for d in docs
+            ]
+        }) + "\n"
+
+        yield json.dumps({"type": "done"}) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+##Uploads...
+@app.post("/upload")
+async def upload(file: UploadFile = File(...)):
+
+    os.makedirs(DOCS_PATH, exist_ok=True)
+
+    path = os.path.join(DOCS_PATH, file.filename)
+
+    with open(path, "wb") as f:
+        f.write(await file.read())
+
+    rebuild_db()
+
+    return {"message": "uploaded"}
+
+##Listing Files..
+@app.get("/docs")
+def list_files():
+    os.makedirs(DOCS_PATH, exist_ok=True)
+    return {"files": os.listdir(DOCS_PATH)}
+
+##Delete...
+@app.delete("/docs/{filename}")
+def delete_file(filename: str):
+
+    path = os.path.join(DOCS_PATH, filename)
+
+    if os.path.exists(path):
+        os.remove(path)
+
+    rebuild_db()
+
+    return {"message": "deleted"}
