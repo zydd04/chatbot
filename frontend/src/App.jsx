@@ -6,6 +6,7 @@ export default function App() {
     const [message, setMessage] = useState([]);
     const [history, setHistory] = useState([]);
     const bottomRef = useRef(null);
+    const [loading, setLoading] = useState(false);
 
     //File Handling
     const loadFiles = async () => {
@@ -38,4 +39,13 @@ export default function App() {
     loadFiles();
         e.target.value = "";
     };
+
+    //Delete handling
+    const deleteFile = async (fname) => {
+        await fetch(`${API}/docs/${filename}`, {
+        method: "DELETE",
+        });
+        loadFiles(); //reload
+    };
+
 }
