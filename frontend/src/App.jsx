@@ -1,12 +1,15 @@
+// BUG 3 FIX: imports must come before all other statements in ES modules
 import { useState, useEffect, useRef } from "react";
-const API = "http://127.0.0.1:8000";
 import "./App.css";
+
+const API = "http://127.0.0.1:8000";
+
 export default function App() {
   const [files, setFiles] = useState([]);
-  const [message, setMessage] = useState([]);
+  const [message, setMessage] = useState(""); 
   const [history, setHistory] = useState([]);
   const bottomRef = useRef(null);
-  const textareaRef = useRef(null); // Added definition to prevent crash
+  const textareaRef = useRef(null);
   const [loading, setLoading] = useState(false);
 
   //File Handling
@@ -31,7 +34,7 @@ export default function App() {
   //Upload handling
   const handleUpload = async (e) => {
     const file = e.target.files[0];
-    if (!file) return; //empty
+    if (!file) return;
     const formData = new FormData();
     formData.append("file", file);
     await fetch(`${API}/upload`, {
@@ -47,17 +50,17 @@ export default function App() {
     await fetch(`${API}/docs/${fname}`, {
       method: "DELETE",
     });
-    loadFiles(); //reload
+    loadFiles();
   };
 
   //Send handling
   const sendMessage = async () => {
-    if (!message.trim() || loading) return; //can't send while loading or empty message
+    if (!message.trim() || loading) return;
     const userMsg = {
       role: "user",
       content: message.trim(),
     };
-    const updatedHistory = [...history, userMsg]; //update history
+    const updatedHistory = [...history, userMsg];
     setHistory(updatedHistory);
     setMessage("");
     setLoading(true);
@@ -81,10 +84,11 @@ export default function App() {
           history: updatedHistory,
         }),
       });
-      //read
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -103,61 +107,49 @@ export default function App() {
             continue;
           }
 
-          //show chunks
           if (data.type === "chunk") {
             setHistory((prev) => {
               const updated = [...prev];
               const last = updated[updated.length - 1];
-
               if (last?.role === "assistant") {
                 updated[updated.length - 1] = {
                   ...last,
                   content: last.content + data.text,
                 };
               }
-
+              return updated;
+            });
+          } else if (data.type === "sources") {
+            setHistory((prev) => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              if (last?.role === "assistant") {
+                updated[updated.length - 1] = {
+                  ...last,
+                  sources: data.sources,
+                };
+              }
+              return updated;
+            });
+          } else if (data.type === "done") {
+            setHistory((prev) => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              if (last?.role === "assistant") {
+                updated[updated.length - 1] = {
+                  ...last,
+                  streaming: false,
+                };
+              }
               return updated;
             });
           }
-          //bug fix
-          if (data.type === "done") {
-            setHistory((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-
-            if (last?.role === "assistant") {
-                updated[updated.length - 1] = {
-                    ...last,
-                streaming: false,
-                };
-            }
-
-            return updated;
-        });
-            if (data.type === "sources") {
-                setHistory((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-
-            if (last?.role === "assistant") {
-                updated[updated.length - 1] = {
-                ...last,
-                sources: data.sources,
-                };
-            }
-
-            return updated;
-            });
-}
-
-    }
         }
       }
     } catch (error) {
       setHistory((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
-
         if (last?.role === "assistant") {
           updated[updated.length - 1] = {
             role: "assistant",
