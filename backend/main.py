@@ -75,3 +75,40 @@ def load_all_docs():
 
     return docs
 
+##chunking ...
+
+def split_docs(docs):
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=150
+    )
+    return splitter.split_documents(docs)
+
+##Vector DB...
+
+def build_db():
+    docs = load_all_docs()
+    chunks = split_docs(docs)
+
+    return Chroma.from_documents(
+        documents=chunks,
+        embedding=embedding_model,
+        persist_directory=DB_PATH,
+        collection_metadata={"hnsw:space": "cosine"}
+    )
+
+
+def load_db():
+    return Chroma(
+        persist_directory=DB_PATH,
+        embedding_function=embedding_model
+    )
+
+
+def rebuild_db():
+    global db
+
+    if os.path.exists(DB_PATH):
+        shutil.rmtree(DB_PATH)
+
+    db = build_db()
