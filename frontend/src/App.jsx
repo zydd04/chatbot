@@ -134,6 +134,22 @@ export default function App() {
 
             return updated;
         });
+            if (data.type === "sources") {
+                setHistory((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+
+            if (last?.role === "assistant") {
+                updated[updated.length - 1] = {
+                ...last,
+                sources: data.sources,
+                };
+            }
+
+            return updated;
+            });
+}
+
     }
         }
       }
