@@ -148,16 +148,20 @@ async def chat(req: ChatRequest):
     )
 
     system = f"""
-You are a strict RAG assistant.
+    You are a strict retrieval assistant.
 
-Use ONLY the context below.
+    Answer ONLY using the provided context.
 
-If answer is not in context say:
-"I don't have enough information."
+    If the answer is not explicitly contained in the context,
+    reply exactly:
 
-Context:
-{context}
-"""
+    I don't have enough information.
+
+    Do not use prior knowledge.
+
+    Context:
+    {context}
+    """
 
     messages = [{"role": "system", "content": system}]
 
