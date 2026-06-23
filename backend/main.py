@@ -201,7 +201,6 @@ async def chat(req: ChatRequest):
 ##Uploads...
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
-
     os.makedirs(DOCS_PATH, exist_ok=True)
 
     path = os.path.join(DOCS_PATH, file.filename)
@@ -209,7 +208,7 @@ async def upload(file: UploadFile = File(...)):
     with open(path, "wb") as f:
         f.write(await file.read())
 
-    rebuild_db()
+    add_file_to_db(path)
 
     return {"message": "uploaded"}
 
