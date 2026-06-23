@@ -38,3 +38,40 @@ reranker = CrossEncoder(
 )
 
 db = None
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: List[Message] = []
+
+##File Loading ...
+def load_file(path: str):
+    if path.endswith(".txt"):
+        return TextLoader(path, encoding="utf-8").load()
+
+    if path.endswith(".pdf"):
+        return PyPDFLoader(path).load()
+
+    if path.endswith(".docx"):
+        text = docx2txt.process(path)
+        return [type("Doc", (), {"page_content": text, "metadata": {"source": path}})]
+
+    return []
+
+
+def load_all_docs():
+    docs = []
+
+    if not os.path.exists(DOCS_PATH):
+        os.makedirs(DOCS_PATH)
+
+    for file in os.listdir(DOCS_PATH):
+        path = os.path.join(DOCS_PATH, file)
+        docs.extend(load_file(path))
+
+    return docs
+
