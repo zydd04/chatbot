@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from typing import List
 import os
 import json
-import shutil
 
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 import docx2txt
@@ -221,12 +220,13 @@ def list_files():
 ##Delete...
 @app.delete("/docs/{filename}")
 def delete_file(filename: str):
+    global db  
 
     path = os.path.join(DOCS_PATH, filename)
 
     if os.path.exists(path):
         os.remove(path)
 
-    rebuild_db()
+    db = build_db()  
 
     return {"message": "deleted"}
