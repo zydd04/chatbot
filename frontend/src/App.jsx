@@ -44,7 +44,7 @@ export default function App() {
 
   //Delete handling
   const removeFile = async (fname) => {
-    await fetch(`${API}/docs/${filename}`, {
+    await fetch(`${API}/docs/${fname}`, {
       method: "DELETE",
     });
     loadFiles(); //reload
