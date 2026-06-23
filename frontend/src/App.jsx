@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 const API = "http://127.0.0.1:8000";
-
+import "./App.css";
 export default function App() {
   const [files, setFiles] = useState([]);
   const [message, setMessage] = useState([]);
@@ -30,7 +30,7 @@ export default function App() {
 
   //Upload handling
   const handleUpload = async (e) => {
-    const file = e.target.docs[0];
+    const file = e.target.files[0];
     if (!file) return; //empty
     const formData = new FormData();
     formData.append("file", file);
@@ -43,7 +43,7 @@ export default function App() {
   };
 
   //Delete handling
-  const deleteFile = async (fname) => {
+  const removeFile = async (fname) => {
     await fetch(`${API}/docs/${filename}`, {
       method: "DELETE",
     });
