@@ -119,7 +119,7 @@ export default function App() {
                 }
             }
         }
-    } catch (error) {
+        } catch (error) {
         setHistory((prev) => {
             const updated = [...prev];
             const last = updated[updated.length - 1];
@@ -139,5 +139,13 @@ export default function App() {
     setLoading(false);
     textareaRef.current?.focus();
   };
+  //shift+enter handler for new line
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
     
 } 
