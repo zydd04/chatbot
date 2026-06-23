@@ -100,6 +100,44 @@ export default function App() {
                 } catch {
                     continue;
                 }
+                
+                //show chunks
+                if (data.type === "chunk") {
+                    setHistory((prev) => {
+                        const updated = [...prev];
+                        const last = updated[updated.length - 1];
+
+                        if (last?.role === "assistant") {
+                            updated[updated.length - 1] = {
+                                ...last,
+                                content: last.content + data.text,
+                            };
+                        }
+
+                    return updated;
+                    });
+                }
             }
         }
+    } catch (error) {
+        setHistory((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+
+            if (last?.role === "assistant") {
+                updated[updated.length - 1] = {
+                role: "assistant",
+                content: "Error: " + error.message,
+                streaming: false,
+                sources: [],
+            };
+        }
+        return updated;
+      });
+    }
+
+    setLoading(false);
+    textareaRef.current?.focus();
+  };
+    
 } 
