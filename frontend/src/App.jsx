@@ -48,4 +48,58 @@ export default function App() {
         loadFiles(); //reload
     };
 
-}
+    //Send handling
+    const sendMessage = async () => {
+        if (!message.trim() || loading) return; //can't send while loading or empty message
+        const userMsg = {
+        role: "user",
+        content: message.trim(),
+        };
+        const updatedHistory = [...history, userMsg]; //update history
+        setHistory(updatedHistory);
+        setMessage("");
+        setLoading(true);
+        setHistory((prev) => [
+            ...prev,
+            {
+            role: "assistant",
+            content: "",
+            streaming: true,
+            sources: [],
+            },
+        ]);
+        try {
+            const res = await fetch(`${API}/chat`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    message: userMsg.content,
+                    history: updatedHistory,
+                }),
+            });
+            //read
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+
+                let data;
+                try {
+                    data = JSON.parse(line);
+                } catch {
+                    continue;
+                }
+            }
+        }
+} 
