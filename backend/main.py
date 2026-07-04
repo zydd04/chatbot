@@ -220,13 +220,13 @@ async def upload(files: List[UploadFile] = File(...)):
     return {"uploaded": uploaded, "failed": failed}
 
 ##Listing Files..
-@app.get("/docs")
+@app.get("/files")
 def list_files():
     os.makedirs(DOCS_PATH, exist_ok=True)
     return {"files": os.listdir(DOCS_PATH)}
 
 ##Delete...
-@app.delete("/docs/{filename}")
+@app.delete("/files/{filename}")
 def delete_file(filename: str):
     global db
 
