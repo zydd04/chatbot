@@ -197,19 +197,27 @@ async def chat(req: ChatRequest):
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
-##Uploads...
+##Uploads... (now accepts multiple files in one request)
 @app.post("/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(files: List[UploadFile] = File(...)):
     os.makedirs(DOCS_PATH, exist_ok=True)
 
-    path = os.path.join(DOCS_PATH, file.filename)
+    uploaded = []
+    failed = []
 
-    with open(path, "wb") as f:
-        f.write(await file.read())
+    for file in files:
+        try:
+            path = os.path.join(DOCS_PATH, file.filename)
 
-    add_file_to_db(path)
+            with open(path, "wb") as f:
+                f.write(await file.read())
 
-    return {"message": "uploaded"}
+            add_file_to_db(path)
+            uploaded.append(file.filename)
+        except Exception as e:
+            failed.append({"file": file.filename, "error": str(e)})
+
+    return {"uploaded": uploaded, "failed": failed}
 
 ##Listing Files..
 @app.get("/docs")
@@ -220,13 +228,13 @@ def list_files():
 ##Delete...
 @app.delete("/docs/{filename}")
 def delete_file(filename: str):
-    global db  
+    global db
 
     path = os.path.join(DOCS_PATH, filename)
 
     if os.path.exists(path):
         os.remove(path)
 
-    db = build_db()  
+    db = build_db()
 
     return {"message": "deleted"}
