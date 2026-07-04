@@ -89,13 +89,19 @@ def build_db():
     docs = load_all_docs()
     chunks = split_docs(docs)
 
+    if not chunks:
+        return Chroma(
+            embedding_function=embedding_model,
+            persist_directory=DB_PATH,
+            collection_metadata={"hnsw:space": "cosine"},
+        )
+
     return Chroma.from_documents(
         documents=chunks,
         embedding=embedding_model,
         persist_directory=DB_PATH,
         collection_metadata={"hnsw:space": "cosine"}
     )
-
 
 def load_db():
     return Chroma(

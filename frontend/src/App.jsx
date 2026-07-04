@@ -20,14 +20,24 @@ export default function App() {
   const [deletingFile, setDeletingFile] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
 
+  // Surfaces failures loading the file list (previously only logged to console,
+  // which made an empty sidebar look identical whether there were 0 files
+  // or the request was failing)
+  const [filesError, setFilesError] = useState(null);
+
   //File Handling
   const loadFiles = async () => {
     try {
-      const res = await fetch(`${API}/docs`);
+      const res = await fetch(`${API}/files`);
+      if (!res.ok) {
+        throw new Error(`Server responded ${res.status}`);
+      }
       const data = await res.json();
       setFiles(data.files || []);
+      setFilesError(null);
     } catch (err) {
       console.error("File load error:", err);
+      setFilesError(err.message || "Could not reach the server");
     }
   };
 
@@ -87,7 +97,7 @@ export default function App() {
     setFiles((prev) => prev.filter((f) => f !== fname));
 
     try {
-      const res = await fetch(`${API}/docs/${encodeURIComponent(fname)}`, {
+      const res = await fetch(`${API}/files/${encodeURIComponent(fname)}`, {
         method: "DELETE",
       });
 
@@ -255,6 +265,12 @@ export default function App() {
         )}
 
         {deleteError && <div className="delete-error">{deleteError}</div>}
+
+        {filesError && (
+          <div className="delete-error">
+            Couldn't load files: {filesError}
+          </div>
+        )}
 
         <div className="files">
           {files.map((f, i) => (
