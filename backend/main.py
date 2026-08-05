@@ -2,11 +2,13 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import os
 import json
-
+import time
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_community.retrievers import BM25Retriever
+from langchain import EnsembleRetriever
 import docx2txt
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -18,6 +20,8 @@ import ollama
 
 DOCS_PATH = "docs"
 DB_PATH = "db/chromadb"
+EVAL_SET_PATH = "eval/eval_set.json"
+REPORT_PATH = "eval/latest_report.json"
 
 app = FastAPI()
 
@@ -37,6 +41,10 @@ reranker = CrossEncoder(
 )
 
 db = None
+bm25_retriever = None
+all_chuncks_cache =[]
+_process_start = time.time()
+_cold_start_seconds = None
 
 class Message(BaseModel):
     role: str
@@ -46,6 +54,12 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[Message] = []
+
+class EvalCase(BaseModel):
+    question : str
+    expected_source : str
+    unanswerable_bool : bool
+    expected_keywords: List[str] = []
 
 ##File Loading ...
 def load_file(path: str):
@@ -83,61 +97,86 @@ def split_docs(docs):
     )
     return splitter.split_documents(docs)
 
-##Vector DB...
-
-def build_db():
+def build_indexes():
+    """
+    Hybrid Search: Chroma for dense embedding search, 
+    BM25 for keyword search
+    both synched
+    """
+    global all_chunks_cache
+ 
     docs = load_all_docs()
     chunks = split_docs(docs)
-
+    all_chunks_cache = chunks
+ 
     if not chunks:
-        return Chroma(
+        dense = Chroma(
             embedding_function=embedding_model,
             persist_directory=DB_PATH,
             collection_metadata={"hnsw:space": "cosine"},
         )
-
-    return Chroma.from_documents(
+        sparse = None
+        return dense, sparse
+ 
+    dense = Chroma.from_documents(
         documents=chunks,
         embedding=embedding_model,
         persist_directory=DB_PATH,
         collection_metadata={"hnsw:space": "cosine"}
     )
-
+ 
+    sparse = BM25Retriever.from_documents(chunks)
+    sparse.k = 8
+ 
+    return dense, sparse
 def load_db():
-    return Chroma(
+    dense = Chroma(
         persist_directory=DB_PATH,
         embedding_function=embedding_model
     )
-
+    docs = load_all_docs()
+    chunks = split_docs(docs)
+    global all_chunks_cache
+    all_chunks_cache = chunks
+ 
+    sparse = None
+    if chunks:
+        sparse = BM25Retriever.from_documents(chunks)
+        sparse.k = 8
+ 
+    return dense, sparse
 
 def add_file_to_db(path):
+    #switch to mb25 + cache
+    global bm25_retriever, all_chunks_cache
+ 
     docs = load_file(path)
     chunks = split_docs(docs)
-
+ 
     db.add_documents(chunks)
+ 
+    all_chunks_cache = all_chunks_cache + chunks
+    bm25_retriever = BM25Retriever.from_documents(all_chunks_cache)
+    bm25_retriever.k = 8
+
 
 ##STARTUP...
 
 @app.on_event("startup")
 def startup():
-    global db
-
+    global db, bm25_retriever
+ 
     if os.path.exists(DB_PATH):
-        db = load_db()
+        db, bm25_retriever = load_db()
     else:
-        db = build_db()
+        db, bm25_retriever = build_indexes()
+ 
+    os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+
 
 ##Retrieve + Rerank
 def retrieve(query: str):
-    retriever = db.as_retriever(search_kwargs={"k": 8})
-    docs = retriever.invoke(query)
-
-    pairs = [[query, d.page_content] for d in docs]
-    scores = reranker.predict(pairs)
-
-    ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
-
-    return [d for _, d in ranked[:3]]
+    
 
 ##Chat...
 @app.post("/chat")
@@ -234,13 +273,13 @@ def list_files():
 ##Delete...
 @app.delete("/files/{filename}")
 def delete_file(filename: str):
-    global db
-
+    global db, bm25_retriever
+ 
     path = os.path.join(DOCS_PATH, filename)
-
+ 
     if os.path.exists(path):
         os.remove(path)
-
-    db = build_db()
-
+ 
+    db, bm25_retriever = build_indexes()
+ 
     return {"message": "deleted"}
