@@ -252,7 +252,7 @@ export default function App() {
             disabled={uploading}
             hidden
           />
-        </label>
+        </label>  
 
         {uploadErrors.length > 0 && (
           <div className="upload-errors">
@@ -284,6 +284,9 @@ export default function App() {
               </button>
             </div>
           ))}
+        </div>
+        <div className="reports">
+          <button onClick={() => getReport()}>Get Report</button>
         </div>
       </div>
 
