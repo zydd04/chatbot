@@ -247,6 +247,7 @@ async def chat(req: ChatRequest):
     def stream():
         global _cold_start_seconds
         first_token_seen = False
+        _process_start = time.time()
  
         response = ollama.chat(
             model="llama3.2:1b",

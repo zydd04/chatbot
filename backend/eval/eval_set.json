@@ -1,18 +1,170 @@
 [
   {
-    "question": "What is the first Club Messi played for?",
+    "question": "When was Lionel Messi born?",
     "expected_source": "messi.txt",
     "unanswerable_bool": false,
-    "expected_keywords": [
-      "Newell's Old Boys"
-    ]
+    "expected_keywords": ["24 June 1987"]
   },
   {
-    "question": "Who is the current CEO of the company OPENAI?",
+    "question": "How many Ballon d'Or awards has Messi won?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["eight"]
+  },
+  {
+    "question": "Which club did Messi join after leaving Barcelona in 2021?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Paris Saint-Germain"]
+  },
+  {
+    "question": "What MLS club does Messi currently play for?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Inter Miami"]
+  },
+  {
+    "question": "How many international goals has Messi scored for Argentina?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["125"]
+  },
+  {
+    "question": "What nickname has the Spanish media given Messi because of his stature?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Atomic Flea"]
+  },
+  {
+    "question": "Who is Messi's wife?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Antonela Roccuzzo"]
+  },
+  {
+    "question": "What medical condition was Messi diagnosed with at age 10?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["growth hormone deficiency"]
+  },
+  {
+    "question": "What award did Messi receive from US President Joe Biden?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Presidential Medal of Freedom"]
+  },
+  {
+    "question": "What sportswear company has sponsored Messi since 2006?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Adidas"]
+  },
+  {
+    "question": "Which team did Messi defeat to win the 2025 MLS Cup?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Vancouver Whitecaps"]
+  },
+  {
+    "question": "What is the name of the charitable foundation Messi launched in 2007?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Leo Messi Foundation"]
+  },
+  {
+    "question": "What was Messi convicted of in Spain in 2016?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["tax fraud"]
+  },
+  {
+    "question": "What youth club did Messi play for in Rosario before Barcelona?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Newell's Old Boys"]
+  },
+  {
+    "question": "How many career goals had Messi scored as of the article, and how many assists?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["910", "410"]
+  },
+  {
+    "question": "When was OpenAI founded and in what US state?",
     "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["December 2015", "Delaware"]
+  },
+  {
+    "question": "Who were the co-chairs among OpenAI's founders?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Elon Musk", "Sam Altman"]
+  },
+  {
+    "question": "What product did OpenAI release in November 2022 that catalyzed the AI boom?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["ChatGPT"]
+  },
+  {
+    "question": "How much has Microsoft invested in OpenAI in total, according to the article?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["$13 billion"]
+  },
+  {
+    "question": "What corporate structure did OpenAI's for-profit branch convert to in October 2025?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["public benefit corporation"]
+  },
+  {
+    "question": "What percentage stake does the OpenAI Foundation hold in OpenAI Group PBC?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["26%"]
+  },
+  {
+    "question": "Who was removed as CEO of OpenAI in November 2023?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Sam Altman"]
+  },
+  {
+    "question": "What is the name of the AI chip OpenAI announced with Broadcom in June 2026?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Jalapeño"]
+  },
+  {
+    "question": "What is the name of OpenAI's text-to-video model?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Sora"]
+  },
+  {
+    "question": "What speech recognition tool did OpenAI develop?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": false,
+    "expected_keywords": ["Whisper"]
+  },
+  {
+    "question": "What is the population of Mars?",
+    "expected_source": "n/a",
     "unanswerable_bool": true,
-    "expected_keywords": [
-      "Sam Altman"
-    ]
+    "expected_keywords": []
+  },
+  {
+    "question": "Who is the current CEO of Google DeepMind?",
+    "expected_source": "n/a",
+    "unanswerable_bool": true,
+    "expected_keywords": []
+  },
+  {
+    "question": "What jersey number does Cristiano Ronaldo currently wear at his club?",
+    "expected_source": "n/a",
+    "unanswerable_bool": true,
+    "expected_keywords": []
   }
 ]

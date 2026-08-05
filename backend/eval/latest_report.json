@@ -1,11 +1,11 @@
 {
   "num_cases": 2,
   "recall_at_10": 1.0,
-  "hallucination_rate": 0.5,
-  "latency_p50_ms": 8878.0,
-  "latency_p95_ms": 8878.0,
+  "hallucination_rate": 0.0,
+  "latency_p50_ms": 8298.7,
+  "latency_p95_ms": 8298.7,
   "cold_start_seconds": null,
-  "generated_at": "2026-08-05 03:30:40",
+  "generated_at": "2026-08-05 03:34:41",
   "cases": [
     {
       "question": "What is the first Club Messi played for?",
@@ -17,19 +17,19 @@
       ],
       "retrieval_hit": true,
       "flagged_hallucination": false,
-      "latency_seconds": 3.764
+      "latency_seconds": 4.208
     },
     {
       "question": "Who is the current CEO of the company OPENAI?",
-      "answer": "The text does not specify the current CEO of OpenAI. It only mentions that Sam Altman was removed as CEO, but his replacement has been Mira Murati and Greg Brockman (as interim chairman). The text also states that the board removed Sam Altman from CEO in 2023 but reinstated him five days later.",
+      "answer": "There is no mention of a current CEO for OpenAI in the provided context. The text only mentions Sam Altman being removed as CEO and then reinstated, but it does not indicate who currently holds the position.",
       "sources": [
         "docs\\openai.txt",
         "docs\\openai.txt",
         "docs\\openai.txt"
       ],
       "retrieval_hit": true,
-      "flagged_hallucination": true,
-      "latency_seconds": 8.878
+      "flagged_hallucination": false,
+      "latency_seconds": 8.299
     }
   ]
 }
