@@ -376,8 +376,8 @@ def run_eval() -> dict:
         answer_lower = result["answer"].lower()
         refused = "i don't have enough information" in answer_lower
  
-        if case.unanswerable_bool:
-            is_hallucination = not refused
+        if case.unanswerable_bool and not refused:
+            is_hallucination = True
         else:
             if not case.expected_keywords:
                 is_hallucination = False

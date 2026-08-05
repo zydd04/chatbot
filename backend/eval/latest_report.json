@@ -2,10 +2,10 @@
   "num_cases": 2,
   "recall_at_10": 1.0,
   "hallucination_rate": 0.5,
-  "latency_p50_ms": 11087.7,
-  "latency_p95_ms": 11087.7,
+  "latency_p50_ms": 8878.0,
+  "latency_p95_ms": 8878.0,
   "cold_start_seconds": null,
-  "generated_at": "2026-08-05 03:20:10",
+  "generated_at": "2026-08-05 03:30:40",
   "cases": [
     {
       "question": "What is the first Club Messi played for?",
@@ -16,20 +16,20 @@
         "docs\\messi.txt"
       ],
       "retrieval_hit": true,
-      "flagged_hallucination": true,
-      "latency_seconds": 3.597
+      "flagged_hallucination": false,
+      "latency_seconds": 3.764
     },
     {
       "question": "Who is the current CEO of the company OPENAI?",
-      "answer": "Unfortunately, I don't have enough information to answer this question. The text only provides information about Sam Altman being removed as CEO in 2023 and reinstated a few days later, but it does not mention who his replacement will be or when they took office. It also mentions that roughly half of then-employed AI safety researchers left OpenAI throughout 2024, citing the company's deprioritization of safety goals, but it doesn't provide any information about the current CEO.",
+      "answer": "The text does not specify the current CEO of OpenAI. It only mentions that Sam Altman was removed as CEO, but his replacement has been Mira Murati and Greg Brockman (as interim chairman). The text also states that the board removed Sam Altman from CEO in 2023 but reinstated him five days later.",
       "sources": [
         "docs\\openai.txt",
         "docs\\openai.txt",
         "docs\\openai.txt"
       ],
       "retrieval_hit": true,
-      "flagged_hallucination": false,
-      "latency_seconds": 11.088
+      "flagged_hallucination": true,
+      "latency_seconds": 8.878
     }
   ]
 }

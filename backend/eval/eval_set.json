@@ -2,7 +2,7 @@
   {
     "question": "What is the first Club Messi played for?",
     "expected_source": "messi.txt",
-    "unanswerable_bool": true,
+    "unanswerable_bool": false,
     "expected_keywords": [
       "Newell's Old Boys"
     ]
@@ -12,7 +12,7 @@
     "expected_source": "openai.txt",
     "unanswerable_bool": true,
     "expected_keywords": [
-      "Mira Murati"
+      "Sam Altman"
     ]
   }
 ]

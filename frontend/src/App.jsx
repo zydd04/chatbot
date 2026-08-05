@@ -334,7 +334,7 @@ export default function App() {
               </div>
               <div className="report-row">
                 <span>Cold start</span>
-                <span>{report.cold_start_seconds != null ? `${report.cold_start_seconds}s` : "not captured yet — restart server, then run again"}</span>
+                <span>{report.cold_start_seconds != null ? `${report.cold_start_seconds}s` : "not captured yet, restart server, then run again"}</span>
               </div>
               <div className="report-timestamp">Generated {report.generated_at}</div>
             </div>
