@@ -1,0 +1,18 @@
+[
+  {
+    "question": "What is the first Club Messi played for?",
+    "expected_source": "messi.txt",
+    "unanswerable_bool": true,
+    "expected_keywords": [
+      "Newell's Old Boys"
+    ]
+  },
+  {
+    "question": "Who is the current CEO of the company OPENAI?",
+    "expected_source": "openai.txt",
+    "unanswerable_bool": true,
+    "expected_keywords": [
+      "Mira Murati"
+    ]
+  }
+]

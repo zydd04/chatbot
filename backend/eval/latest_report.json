@@ -1,0 +1,35 @@
+{
+  "num_cases": 2,
+  "recall_at_10": 1.0,
+  "hallucination_rate": 0.5,
+  "latency_p50_ms": 11087.7,
+  "latency_p95_ms": 11087.7,
+  "cold_start_seconds": null,
+  "generated_at": "2026-08-05 03:20:10",
+  "cases": [
+    {
+      "question": "What is the first Club Messi played for?",
+      "answer": "Newell's Old Boys.",
+      "sources": [
+        "docs\\messi.txt",
+        "docs\\messi.txt",
+        "docs\\messi.txt"
+      ],
+      "retrieval_hit": true,
+      "flagged_hallucination": true,
+      "latency_seconds": 3.597
+    },
+    {
+      "question": "Who is the current CEO of the company OPENAI?",
+      "answer": "Unfortunately, I don't have enough information to answer this question. The text only provides information about Sam Altman being removed as CEO in 2023 and reinstated a few days later, but it does not mention who his replacement will be or when they took office. It also mentions that roughly half of then-employed AI safety researchers left OpenAI throughout 2024, citing the company's deprioritization of safety goals, but it doesn't provide any information about the current CEO.",
+      "sources": [
+        "docs\\openai.txt",
+        "docs\\openai.txt",
+        "docs\\openai.txt"
+      ],
+      "retrieval_hit": true,
+      "flagged_hallucination": false,
+      "latency_seconds": 11.088
+    }
+  ]
+}

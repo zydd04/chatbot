@@ -349,7 +349,7 @@ def chat_sync(message: str) -> dict:
 #report generating
 def run_eval() -> dict:
     if not os.path.exists(EVAL_SET_PATH):
-        return {"error": f"No eval set found at {EVAL_SET_PATH}. See eval_set.example.json."}
+        return {"error": f"No eval set found at {EVAL_SET_PATH}"}
  
     with open(EVAL_SET_PATH) as f:
         raw_cases = json.load(f)
@@ -376,11 +376,11 @@ def run_eval() -> dict:
         answer_lower = result["answer"].lower()
         refused = "i don't have enough information" in answer_lower
  
-        if case.unanswerable:
+        if case.unanswerable_bool:
             is_hallucination = not refused
         else:
             if not case.expected_keywords:
-                is_hallucination = False  # nothing to check against
+                is_hallucination = False
             else:
                 is_hallucination = not any(
                     kw.lower() in answer_lower for kw in case.expected_keywords

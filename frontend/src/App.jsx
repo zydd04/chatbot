@@ -1,4 +1,3 @@
-// BUG 3 FIX: imports must come before all other statements in ES modules
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
@@ -12,18 +11,16 @@ export default function App() {
   const textareaRef = useRef(null);
   const [loading, setLoading] = useState(false);
 
-  // Upload state: tracks in-flight upload + any per-file failures returned by the backend
   const [uploading, setUploading] = useState(false);
   const [uploadErrors, setUploadErrors] = useState([]);
 
-  // Delete state: tracks which filename is currently being deleted + any error
   const [deletingFile, setDeletingFile] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
-
-  // Surfaces failures loading the file list (previously only logged to console,
-  // which made an empty sidebar look identical whether there were 0 files
-  // or the request was failing)
   const [filesError, setFilesError] = useState(null);
+
+  const [report, setReport] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState(null);
 
   //File Handling
   const loadFiles = async () => {
@@ -92,7 +89,6 @@ export default function App() {
     setDeletingFile(fname);
     setDeleteError(null);
 
-    // Optimistically remove from UI so the button disappears immediately
     const previousFiles = files;
     setFiles((prev) => prev.filter((f) => f !== fname));
 
@@ -109,11 +105,34 @@ export default function App() {
     } catch (err) {
       console.error("Delete error:", err);
       setDeleteError(`Failed to delete "${fname}": ${err.message}`);
-      // Roll back the optimistic removal since the delete didn't succeed
       setFiles(previousFiles);
     } finally {
       setDeletingFile(null);
     }
+  };
+  const getReport = async () => {
+      setReportLoading(true);
+      setReportError(null);
+      try {
+        const res = await fetch(`${API}/report/run`, { method: "POST" });
+    
+        if (!res.ok) {
+          throw new Error(`Report generation failed with status ${res.status}`);
+        }
+    
+        const data = await res.json();
+    
+        if (data.error) {
+          throw new Error(data.error);
+        }
+    
+        setReport(data);
+      } catch (err) {
+        console.error("Report error:", err);
+        setReportError(err.message || "Could not generate report");
+      } finally {
+        setReportLoading(false);
+      }
   };
 
   //Send handling
@@ -286,10 +305,42 @@ export default function App() {
           ))}
         </div>
         <div className="reports">
-          <button onClick={() => getReport()}>Get Report</button>
+          <button onClick={getReport} disabled={reportLoading}>
+            {reportLoading ? "Running eval..." : "Get Report"}
+          </button>
+          {reportError && <div className="delete-error">{reportError}</div>}
+          {report && (
+            <div className="report-panel">
+              <h4>Eval Report</h4>
+              <div className="report-row">
+                <span>Cases run</span>
+                <span>{report.num_cases}</span>
+              </div>
+              <div className="report-row">
+                <span>Recall@10</span>
+                <span>{report.recall_at_10 != null ? `${(report.recall_at_10 * 100).toFixed(0)}%` : "—"}</span>
+              </div>
+              <div className="report-row">
+                <span>Hallucination rate</span>
+                <span>{report.hallucination_rate != null ? `${(report.hallucination_rate * 100).toFixed(0)}%` : "—"}</span>
+              </div>
+              <div className="report-row">
+                <span>p50 latency</span>
+                <span>{report.latency_p50_ms != null ? `${report.latency_p50_ms}ms` : "—"}</span>
+              </div>
+              <div className="report-row">
+                <span>p95 latency</span>
+                <span>{report.latency_p95_ms != null ? `${report.latency_p95_ms}ms` : "—"}</span>
+              </div>
+              <div className="report-row">
+                <span>Cold start</span>
+                <span>{report.cold_start_seconds != null ? `${report.cold_start_seconds}s` : "not captured yet — restart server, then run again"}</span>
+              </div>
+              <div className="report-timestamp">Generated {report.generated_at}</div>
+            </div>
+          )}
         </div>
       </div>
-
       <div className="chat">
         <div className="messages">
           {history.map((msg, i) => (
