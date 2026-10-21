@@ -5,4 +5,4 @@ A Retrieval-Augmented Generation (RAG) chatbot integrated with a local LLM, cont
 - Designed to reduce hallucinations by grounding answers in retrieved context rather than relying solely on the model's internal knowledge.
 - Fully containerized with Docker for consistent, portable deployment.
 
-`Tech: Python, React, Local LLM, Docker, Vector Database`
+`Tech: Python, React, FastAPI, Local LLM`
