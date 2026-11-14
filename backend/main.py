@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -6,6 +6,8 @@ from typing import List, Optional
 import os
 import json
 import time
+import threading
+from langchain_core.documents import Document
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
 import docx2txt
@@ -21,12 +23,16 @@ DOCS_PATH = "docs"
 DB_PATH = "db/chromadb"
 EVAL_SET_PATH = "eval/eval_set.json"
 REPORT_PATH = "eval/latest_report.json"
+LLM_MODEL = "qwen2.5:0.5b"
+SUPPORTED_EXTENSIONS = (".txt", ".pdf", ".docx")
+COLLECTION_METADATA = {"hnsw:space": "cosine"}
+REFUSAL = "i don't have enough information"
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -41,8 +47,8 @@ reranker = CrossEncoder(
 
 db = None
 bm25_retriever = None
-all_chuncks_cache =[]
-_process_start = time.time()
+all_chunks_cache = []
+index_lock = threading.Lock()
 _cold_start_seconds = None
 
 class Message(BaseModel):
@@ -62,15 +68,17 @@ class EvalCase(BaseModel):
 
 ##File Loading ...
 def load_file(path: str):
-    if path.endswith(".txt"):
+    lower = path.lower()
+
+    if lower.endswith(".txt"):
         return TextLoader(path, encoding="utf-8").load()
 
-    if path.endswith(".pdf"):
+    if lower.endswith(".pdf"):
         return PyPDFLoader(path).load()
 
-    if path.endswith(".docx"):
+    if lower.endswith(".docx"):
         text = docx2txt.process(path)
-        return [type("Doc", (), {"page_content": text, "metadata": {"source": path}})]
+        return [Document(page_content=text, metadata={"source": path})]
 
     return []
 
@@ -78,12 +86,17 @@ def load_file(path: str):
 def load_all_docs():
     docs = []
 
-    if not os.path.exists(DOCS_PATH):
-        os.makedirs(DOCS_PATH)
+    os.makedirs(DOCS_PATH, exist_ok=True)
 
-    for file in os.listdir(DOCS_PATH):
+    for file in sorted(os.listdir(DOCS_PATH)):
         path = os.path.join(DOCS_PATH, file)
-        docs.extend(load_file(path))
+        if not os.path.isfile(path):
+            continue
+        try:
+            docs.extend(load_file(path))
+        except Exception as e:
+            # one unreadable file must not take the whole server down
+            print(f"Skipping {path}: {e}")
 
     return docs
 
@@ -96,67 +109,77 @@ def split_docs(docs):
     )
     return splitter.split_documents(docs)
 
-def build_indexes():
-    """
-    Hybrid Search: Chroma for dense embedding search, 
-    BM25 for keyword search
-    both synched
-    """
-    global all_chunks_cache
- 
-    docs = load_all_docs()
-    chunks = split_docs(docs)
-    all_chunks_cache = chunks
- 
-    if not chunks:
-        dense = Chroma(
-            embedding_function=embedding_model,
-            persist_directory=DB_PATH,
-            collection_metadata={"hnsw:space": "cosine"},
-        )
-        sparse = None
-        return dense, sparse
- 
-    dense = Chroma.from_documents(
-        documents=chunks,
-        embedding=embedding_model,
+
+def open_dense():
+    return Chroma(
+        embedding_function=embedding_model,
         persist_directory=DB_PATH,
-        collection_metadata={"hnsw:space": "cosine"}
+        collection_metadata=COLLECTION_METADATA,
     )
- 
+
+
+def build_bm25(chunks):
+    if not chunks:
+        return None
     sparse = BM25Retriever.from_documents(chunks)
     sparse.k = 8
- 
-    return dense, sparse
-def load_db():
-    dense = Chroma(
-        persist_directory=DB_PATH,
-        embedding_function=embedding_model
-    )
-    docs = load_all_docs()
-    chunks = split_docs(docs)
+    return sparse
+
+
+def build_indexes(force: bool = False):
+    """
+    Hybrid Search: Chroma for dense embedding search,
+    BM25 for keyword search
+    both synched
+
+    The persisted Chroma collection is reused when it already matches the
+    files in docs/, otherwise it is wiped and rebuilt (re-adding on top of an
+    existing collection would duplicate every chunk).
+    """
     global all_chunks_cache
+
+    chunks = split_docs(load_all_docs())
     all_chunks_cache = chunks
- 
-    sparse = None
-    if chunks:
-        sparse = BM25Retriever.from_documents(chunks)
-        sparse.k = 8
- 
-    return dense, sparse
+
+    dense = open_dense()
+
+    if force or dense._collection.count() != len(chunks):
+        dense.delete_collection()
+        dense = open_dense()
+        if chunks:
+            dense.add_documents(chunks)
+
+    return dense, build_bm25(chunks)
+
+
+def remove_source_from_db(path):
+    """Drop every chunk that came from `path` from both indexes."""
+    global bm25_retriever, all_chunks_cache
+
+    ids = db.get(where={"source": path})["ids"]
+    if ids:
+        db.delete(ids=ids)
+
+    all_chunks_cache = [
+        c for c in all_chunks_cache if c.metadata.get("source") != path
+    ]
+    bm25_retriever = build_bm25(all_chunks_cache)
+
 
 def add_file_to_db(path):
-    #switch to mb25 + cache
     global bm25_retriever, all_chunks_cache
- 
-    docs = load_file(path)
-    chunks = split_docs(docs)
- 
+
+    chunks = split_docs(load_file(path))
+    if not chunks:
+        raise ValueError("No readable text found in file")
+
+    # re-uploading a file replaces its old chunks instead of duplicating them
+    remove_source_from_db(path)
+
     db.add_documents(chunks)
- 
+
     all_chunks_cache = all_chunks_cache + chunks
-    bm25_retriever = BM25Retriever.from_documents(all_chunks_cache)
-    bm25_retriever.k = 8
+    bm25_retriever = build_bm25(all_chunks_cache)
 
 
 ##STARTUP...
@@ -164,12 +187,9 @@ def add_file_to_db(path):
 @app.on_event("startup")
 def startup():
     global db, bm25_retriever
- 
-    if os.path.exists(DB_PATH):
-        db, bm25_retriever = load_db()
-    else:
-        db, bm25_retriever = build_indexes()
- 
+
+    db, bm25_retriever = build_indexes()
+
     os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
 
 
@@ -210,64 +230,81 @@ def retrieve(query: str, k_dense: int = 8, k_sparse: int = 8, top_n: int = 3):
  
  
 ##Chat...
-@app.post("/chat")
-async def chat(req: ChatRequest):
-    global _cold_start_seconds
- 
-    docs = retrieve(req.message)
- 
+def build_system_prompt(docs) -> str:
     context = "\n\n".join(
         f"[Source {i+1}]\n{d.page_content}"
         for i, d in enumerate(docs)
     )
- 
-    system = f"""
+
+    return f"""
     You are a strict retrieval assistant.
- 
+
     Answer ONLY using the provided context.
- 
+
     If the answer is not explicitly contained in the context,
     reply exactly:
- 
+
     I don't have enough information.
- 
+
     Do not use prior knowledge.
- 
+
     Context:
     {context}
     """
- 
-    messages = [{"role": "system", "content": system}]
- 
+
+
+def _ollama_stream(messages):
+    try:
+        yield from ollama.chat(model=LLM_MODEL, messages=messages, stream=True)
+    except ollama.ResponseError as e:
+        # model not pulled yet (fresh ollama container): pull once and retry.
+        # A 404 is raised before any chunk is produced, so retrying is safe.
+        if e.status_code != 404:
+            raise
+        ollama.pull(LLM_MODEL)
+        yield from ollama.chat(model=LLM_MODEL, messages=messages, stream=True)
+
+
+def generate(messages):
+    """Yields answer text pieces; records time-to-first-token of the first call."""
+    global _cold_start_seconds
+    start = time.time()
+
+    for chunk in _ollama_stream(messages):
+        if _cold_start_seconds is None:
+            _cold_start_seconds = time.time() - start
+        text = chunk["message"]["content"]
+        if text:
+            yield text
+
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    docs = retrieve(req.message)
+
+    messages = [{"role": "system", "content": build_system_prompt(docs)}]
+
     for m in req.history[-20:]:
-        messages.append({"role": m.role, "content": m.content})
- 
+        if m.role in ("user", "assistant") and m.content:
+            messages.append({"role": m.role, "content": m.content})
+
     messages.append({"role": "user", "content": req.message})
- 
+
     def stream():
-        global _cold_start_seconds
-        first_token_seen = False
-        _process_start = time.time()
- 
-        response = ollama.chat(
-            model="llama3.2:1b",
-            messages=messages,
-            stream=True
-        )
- 
-        for chunk in response:
-            if not first_token_seen:
-                first_token_seen = True
-                if _cold_start_seconds is None:
-                    _cold_start_seconds = time.time() - _process_start
- 
-            text = chunk["message"]["content"]
- 
+        try:
+            for text in generate(messages):
+                yield json.dumps({
+                    "type": "chunk",
+                    "text": text
+                }) + "\n"
+        except Exception as e:
             yield json.dumps({
-                "type": "chunk",
-                "text": text
+                "type": "error",
+                "error": f"LLM request failed: {e}"
             }) + "\n"
- 
+            yield json.dumps({"type": "done"}) + "\n"
+            return
+
         yield json.dumps({
             "type": "sources",
             "sources": [
@@ -278,32 +315,52 @@ async def chat(req: ChatRequest):
                 for d in docs
             ]
         }) + "\n"
- 
+
         yield json.dumps({"type": "done"}) + "\n"
- 
+
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 ##Uploads... (now accepts multiple files in one request)
 @app.post("/upload")
-async def upload(files: List[UploadFile] = File(...)):
+def upload(files: List[UploadFile] = File(...)):
     os.makedirs(DOCS_PATH, exist_ok=True)
 
     uploaded = []
     failed = []
 
     for file in files:
+        # strip any directory part so a crafted name can't escape docs/
+        name = os.path.basename((file.filename or "").replace("\\", "/"))
+
+        if not name or not name.lower().endswith(SUPPORTED_EXTENSIONS):
+            failed.append({
+                "file": name or "unknown",
+                "error": "Unsupported file type (use .txt, .pdf or .docx)",
+            })
+            continue
+
+        path = os.path.join(DOCS_PATH, name)
+
         try:
-            path = os.path.join(DOCS_PATH, file.filename)
-
             with open(path, "wb") as f:
-                f.write(await file.read())
+                f.write(file.file.read())
 
-            add_file_to_db(path)
-            uploaded.append(file.filename)
+            with index_lock:
+                add_file_to_db(path)
+            uploaded.append(name)
         except Exception as e:
-            failed.append({"file": file.filename, "error": str(e)})
+            # don't leave a file listed that isn't searchable
+            with index_lock:
+                try:
+                    remove_source_from_db(path)
+                except Exception:
+                    pass
+            if os.path.exists(path):
+                os.remove(path)
+            failed.append({"file": name, "error": str(e)})
 
     return {"uploaded": uploaded, "failed": failed}
+
 #chat synchronization
 def chat_sync(message: str) -> dict:
     """
@@ -311,48 +368,21 @@ def chat_sync(message: str) -> dict:
     response + sources in one shot.
     """
     docs = retrieve(message)
- 
-    context = "\n\n".join(
-        f"[Source {i+1}]\n{d.page_content}"
-        for i, d in enumerate(docs)
-    )
- 
-    system = f"""
-    You are a strict retrieval assistant.
- 
-    Answer ONLY using the provided context.
- 
-    If the answer is not explicitly contained in the context,
-    reply exactly:
- 
-    I don't have enough information.
- 
-    Do not use prior knowledge.
- 
-    Context:
-    {context}
-    """
- 
-    response = ollama.chat(
-        model="llama3.2:1b",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": message},
-        ],
-        stream=False,
-    )
- 
-    answer = response["message"]["content"]
+
+    answer = "".join(generate([
+        {"role": "system", "content": build_system_prompt(docs)},
+        {"role": "user", "content": message},
+    ]))
     sources = [d.metadata.get("source", "unknown") for d in docs]
- 
+
     return {"answer": answer, "sources": sources}
- 
+
 #report generating
 def run_eval() -> dict:
     if not os.path.exists(EVAL_SET_PATH):
         return {"error": f"No eval set found at {EVAL_SET_PATH}"}
  
-    with open(EVAL_SET_PATH) as f:
+    with open(EVAL_SET_PATH, encoding="utf-8") as f:
         raw_cases = json.load(f)
     cases = [EvalCase(**c) for c in raw_cases]
  
@@ -360,6 +390,7 @@ def run_eval() -> dict:
         return {"error": "Eval set is empty."}
  
     retrieval_hits = 0
+    answerable = 0
     hallucinations = 0
     latencies = []
     case_results = []
@@ -370,12 +401,18 @@ def run_eval() -> dict:
         elapsed = time.time() - start
         latencies.append(elapsed)
  
-        retrieved_hit = any(case.expected_source in s for s in result["sources"])
-        if retrieved_hit:
-            retrieval_hits += 1
+        # unanswerable cases have no source to find, so they don't count
+        # towards recall
+        if case.unanswerable_bool:
+            retrieved_hit = None
+        else:
+            answerable += 1
+            retrieved_hit = any(case.expected_source in s for s in result["sources"])
+            if retrieved_hit:
+                retrieval_hits += 1
  
-        answer_lower = result["answer"].lower()
-        refused = "i don't have enough information" in answer_lower
+        answer_lower = result["answer"].lower().replace("\u2019", "'")
+        refused = REFUSAL in answer_lower
  
         if case.unanswerable_bool and not refused:
             is_hallucination = True
@@ -406,16 +443,17 @@ def run_eval() -> dict:
  
     report = {
         "num_cases": n,
-        "recall_at_10": round(retrieval_hits / n, 3) if n else None,
+        "recall_at_10": round(retrieval_hits / answerable, 3) if answerable else None,
         "hallucination_rate": round(hallucinations / n, 3) if n else None,
         "latency_p50_ms": round(p50 * 1000, 1) if p50 is not None else None,
         "latency_p95_ms": round(p95 * 1000, 1) if p95 is not None else None,
-        "cold_start_seconds": round(_cold_start_seconds, 2) if _cold_start_seconds else None,
+        "cold_start_seconds": round(_cold_start_seconds, 2) if _cold_start_seconds is not None else None,
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "cases": case_results,
     }
  
-    with open(REPORT_PATH, "w") as f:
+    os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+    with open(REPORT_PATH, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
  
     return report
@@ -431,25 +469,31 @@ def report_latest():
     """Returns the most recently generated report without re-running eval."""
     if not os.path.exists(REPORT_PATH):
         return {"error": "No report generated yet. POST /report/run first."}
-    with open(REPORT_PATH) as f:
+    with open(REPORT_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 ##Listing Files..
 @app.get("/files")
 def list_files():
     os.makedirs(DOCS_PATH, exist_ok=True)
-    return {"files": os.listdir(DOCS_PATH)}
+    return {
+        "files": sorted(
+            f for f in os.listdir(DOCS_PATH)
+            if os.path.isfile(os.path.join(DOCS_PATH, f))
+        )
+    }
 
 ##Delete...
 @app.delete("/files/{filename}")
 def delete_file(filename: str):
-    global db, bm25_retriever
- 
-    path = os.path.join(DOCS_PATH, filename)
- 
-    if os.path.exists(path):
+    name = os.path.basename(filename)
+    path = os.path.join(DOCS_PATH, name)
+
+    if not name or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    with index_lock:
         os.remove(path)
- 
-    db, bm25_retriever = build_indexes()
- 
+        remove_source_from_db(path)
+
     return {"message": "deleted"}

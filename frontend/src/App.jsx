@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-const API = "http://127.0.0.1:8000";
+const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
+async function fetchFiles() {
+  const res = await fetch(`${API}/files`);
+  if (!res.ok) {
+    throw new Error(`Server responded ${res.status}`);
+  }
+  const data = await res.json();
+  return data.files || [];
+}
 
 export default function App() {
   const [files, setFiles] = useState([]);
@@ -25,12 +34,7 @@ export default function App() {
   //File Handling
   const loadFiles = async () => {
     try {
-      const res = await fetch(`${API}/files`);
-      if (!res.ok) {
-        throw new Error(`Server responded ${res.status}`);
-      }
-      const data = await res.json();
-      setFiles(data.files || []);
+      setFiles(await fetchFiles());
       setFilesError(null);
     } catch (err) {
       console.error("File load error:", err);
@@ -39,7 +43,19 @@ export default function App() {
   };
 
   useEffect(() => {
-    loadFiles();
+    let cancelled = false;
+    fetchFiles().then(
+      (list) => {
+        if (!cancelled) setFiles(list);
+      },
+      (err) => {
+        console.error("File load error:", err);
+        if (!cancelled) setFilesError(err.message || "Could not reach the server");
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -142,12 +158,14 @@ export default function App() {
       role: "user",
       content: message.trim(),
     };
-    const updatedHistory = [...history, userMsg];
-    setHistory(updatedHistory);
-    setMessage("");
-    setLoading(true);
-    setHistory((prev) => [
-      ...prev,
+    // Prior turns only: the backend appends the new message itself, and
+    // failed replies must not be fed back to the model as context.
+    const priorHistory = history
+      .filter((m) => !m.failed && m.content)
+      .map(({ role, content }) => ({ role, content }));
+    setHistory([
+      ...history,
+      userMsg,
       {
         role: "assistant",
         content: "",
@@ -155,6 +173,21 @@ export default function App() {
         sources: [],
       },
     ]);
+    setMessage("");
+    setLoading(true);
+
+    const updateLast = (patch) =>
+      setHistory((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = {
+            ...last,
+            ...(typeof patch === "function" ? patch(last) : patch),
+          };
+        }
+        return updated;
+      });
     try {
       const res = await fetch(`${API}/chat`, {
         method: "POST",
@@ -163,13 +196,36 @@ export default function App() {
         },
         body: JSON.stringify({
           message: userMsg.content,
-          history: updatedHistory,
+          history: priorHistory,
         }),
       });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`Server responded ${res.status}`);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+
+      const handleLine = (line) => {
+        if (!line.trim()) return;
+
+        let data;
+        try {
+          data = JSON.parse(line);
+        } catch {
+          return;
+        }
+
+        if (data.type === "chunk") {
+          updateLast((last) => ({ content: last.content + data.text }));
+        } else if (data.type === "sources") {
+          updateLast({ sources: data.sources });
+        } else if (data.type === "error") {
+          throw new Error(data.error || "Generation failed");
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -179,73 +235,24 @@ export default function App() {
         const lines = buffer.split("\n");
         buffer = lines.pop();
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          let data;
-          try {
-            data = JSON.parse(line);
-          } catch {
-            continue;
-          }
-
-          if (data.type === "chunk") {
-            setHistory((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last?.role === "assistant") {
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: last.content + data.text,
-                };
-              }
-              return updated;
-            });
-          } else if (data.type === "sources") {
-            setHistory((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last?.role === "assistant") {
-                updated[updated.length - 1] = {
-                  ...last,
-                  sources: data.sources,
-                };
-              }
-              return updated;
-            });
-          } else if (data.type === "done") {
-            setHistory((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last?.role === "assistant") {
-                updated[updated.length - 1] = {
-                  ...last,
-                  streaming: false,
-                };
-              }
-              return updated;
-            });
-          }
-        }
+        for (const line of lines) handleLine(line);
       }
-    } catch (error) {
-      setHistory((prev) => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === "assistant") {
-          updated[updated.length - 1] = {
-            role: "assistant",
-            content: "Error: " + error.message,
-            streaming: false,
-            sources: [],
-          };
-        }
-        return updated;
-      });
-    }
 
-    setLoading(false);
-    textareaRef.current?.focus();
+      handleLine(buffer + decoder.decode());
+
+      // Always clear the cursor, even if the stream ended without "done"
+      updateLast({ streaming: false });
+    } catch (error) {
+      updateLast({
+        content: "Error: " + error.message,
+        streaming: false,
+        sources: [],
+        failed: true,
+      });
+    } finally {
+      setLoading(false);
+      textareaRef.current?.focus();
+    }
   };
 
   //shift+enter handler for new line
@@ -317,7 +324,7 @@ export default function App() {
                 <span>{report.num_cases}</span>
               </div>
               <div className="report-row">
-                <span>Recall@10</span>
+                <span>Retrieval recall</span>
                 <span>{report.recall_at_10 != null ? `${(report.recall_at_10 * 100).toFixed(0)}%` : "—"}</span>
               </div>
               <div className="report-row">
@@ -334,7 +341,7 @@ export default function App() {
               </div>
               <div className="report-row">
                 <span>Cold start</span>
-                <span>{report.cold_start_seconds != null ? `${report.cold_start_seconds}s` : "not captured yet, restart server, then run again"}</span>
+                <span>{report.cold_start_seconds != null ? `${report.cold_start_seconds}s` : "not captured"}</span>
               </div>
               <div className="report-timestamp">Generated {report.generated_at}</div>
             </div>

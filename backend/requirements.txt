@@ -12,4 +12,5 @@ sentence-transformers==3.*
 docx2txt==0.8
 pypdf==5.*
 ollama==0.4.*
-rank_bm25
+rank_bm25==0.2.*
+python-dotenv==1.*

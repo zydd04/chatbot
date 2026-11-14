@@ -1,41 +1,33 @@
-### \--- Environment & Configuration ---
+# --- Environment & Configuration ---
+.env
+.env.local
+*.env
 
-.env  
-.env.local  
-\*.env
-backend/venv
-frontend/node_modules/
+# --- Local Vector Database Storage ---
 db/
+**/my_vector_db/
+**/my_lance_db/
+**/chroma.sqlite3
+
+# --- Python Backend Dependencies & Cache ---
 __pycache__/
-### \--- Local Vector Database Storage ---
+*.pyc
+*.pyo
+*.pyd
+**/env/
+**/venv/
+**/.venv
+**/Lib/
+**/site-packages/
 
-\*\*/my\_vector\_db/  
-\*\*/my\_lance\_db/  
-\*\*/chroma.sqlite3
-
-
-### \--- Python Backend Dependencies & Cache ---
-
-\*\*/**pycache**/  
-\*.pyc  
-\*.pyo  
-\*.pyd  
-\*\*/env/  
-\*\*/venv/  
-\*\*/.venv  
-\*\*/Lib/  
-\*\*/site-packages/
-frontend/node_modules/
-### \--- Node.js Frontend Dependencies & Build ---
-
-\*\*/node\_modules/  
-\*\*/dist/  
-\*\*/build/  
-.eslintcache  
+# --- Node.js Frontend Dependencies & Build ---
+**/node_modules/
+**/dist/
+**/build/
+.eslintcache
 .vite
 
-### \--- OS & IDE Metadata ---
-
-.DS\_Store  
-.idea/  
+# --- OS & IDE Metadata ---
+.DS_Store
+.idea/
 .vscode/
