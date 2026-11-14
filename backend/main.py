@@ -28,6 +28,15 @@ SUPPORTED_EXTENSIONS = (".txt", ".pdf", ".docx")
 COLLECTION_METADATA = {"hnsw:space": "cosine"}
 REFUSAL = "i don't have enough information"
 
+# Generation runs on CPU, where reading the prompt is the slow part, so the
+# prompt is kept small: short chunks, few of them, and a short chat history.
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 75
+TOP_N_CHUNKS = 3
+MAX_HISTORY_MESSAGES = 6
+# keep the model in memory between questions instead of reloading it
+LLM_KEEP_ALIVE = "30m"
+
 app = FastAPI()
 
 app.add_middleware(
@@ -50,6 +59,7 @@ bm25_retriever = None
 all_chunks_cache = []
 index_lock = threading.Lock()
 _cold_start_seconds = None
+llm_ready = threading.Event()
 
 class Message(BaseModel):
     role: str
@@ -104,8 +114,8 @@ def load_all_docs():
 
 def split_docs(docs):
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=150
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP
     )
     return splitter.split_documents(docs)
 
@@ -184,6 +194,32 @@ def add_file_to_db(path):
 
 ##STARTUP...
 
+def prepare_llm(retries: int = 60, delay: float = 5.0):
+    """
+    Downloads the model if it is missing and loads it into memory, so the
+    first chat message doesn't have to wait for either. Retries because the
+    ollama container may still be starting when the backend comes up.
+    """
+    for _ in range(retries):
+        try:
+            try:
+                ollama.show(LLM_MODEL)
+            except ollama.ResponseError as e:
+                if e.status_code != 404:
+                    raise
+                print(f"Downloading {LLM_MODEL}...")
+                ollama.pull(LLM_MODEL)
+
+            # an empty prompt just loads the model
+            ollama.generate(model=LLM_MODEL, prompt="", keep_alive=LLM_KEEP_ALIVE)
+            llm_ready.set()
+            print(f"{LLM_MODEL} is ready")
+            return
+        except Exception as e:
+            print(f"LLM not ready yet: {e}")
+            time.sleep(delay)
+
+
 @app.on_event("startup")
 def startup():
     global db, bm25_retriever
@@ -191,6 +227,9 @@ def startup():
     db, bm25_retriever = build_indexes()
 
     os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+
+    # in the background so the API is reachable while the model downloads
+    threading.Thread(target=prepare_llm, daemon=True).start()
 
 
 ##Hybrid Retrieve + Rerank
@@ -208,7 +247,7 @@ def reciprocal_rank_fusion(ranked_lists, k: int = 60):
     return [doc_lookup[key] for key, _ in merged]
  
  
-def retrieve(query: str, k_dense: int = 8, k_sparse: int = 8, top_n: int = 3):
+def retrieve(query: str, k_dense: int = 8, k_sparse: int = 8, top_n: int = TOP_N_CHUNKS):
     dense_retriever = db.as_retriever(search_kwargs={"k": k_dense})
     dense_docs = dense_retriever.invoke(query)
  
@@ -236,33 +275,36 @@ def build_system_prompt(docs) -> str:
         for i, d in enumerate(docs)
     )
 
-    return f"""
-    You are a strict retrieval assistant.
+    return (
+        "You are a strict retrieval assistant.\n"
+        "Answer ONLY using the provided context.\n"
+        "If the answer is not explicitly contained in the context, "
+        "reply exactly:\n"
+        "I don't have enough information.\n"
+        "Do not use prior knowledge.\n\n"
+        f"Context:\n{context}"
+    )
 
-    Answer ONLY using the provided context.
 
-    If the answer is not explicitly contained in the context,
-    reply exactly:
-
-    I don't have enough information.
-
-    Do not use prior knowledge.
-
-    Context:
-    {context}
-    """
+def _ollama_chat(messages):
+    return ollama.chat(
+        model=LLM_MODEL,
+        messages=messages,
+        stream=True,
+        keep_alive=LLM_KEEP_ALIVE,
+    )
 
 
 def _ollama_stream(messages):
     try:
-        yield from ollama.chat(model=LLM_MODEL, messages=messages, stream=True)
+        yield from _ollama_chat(messages)
     except ollama.ResponseError as e:
         # model not pulled yet (fresh ollama container): pull once and retry.
         # A 404 is raised before any chunk is produced, so retrying is safe.
         if e.status_code != 404:
             raise
         ollama.pull(LLM_MODEL)
-        yield from ollama.chat(model=LLM_MODEL, messages=messages, stream=True)
+        yield from _ollama_chat(messages)
 
 
 def generate(messages):
@@ -273,6 +315,7 @@ def generate(messages):
     for chunk in _ollama_stream(messages):
         if _cold_start_seconds is None:
             _cold_start_seconds = time.time() - start
+        llm_ready.set()
         text = chunk["message"]["content"]
         if text:
             yield text
@@ -284,13 +327,20 @@ def chat(req: ChatRequest):
 
     messages = [{"role": "system", "content": build_system_prompt(docs)}]
 
-    for m in req.history[-20:]:
+    for m in req.history[-MAX_HISTORY_MESSAGES:]:
         if m.role in ("user", "assistant") and m.content:
             messages.append({"role": m.role, "content": m.content})
 
     messages.append({"role": "user", "content": req.message})
 
     def stream():
+        # tell the UI why nothing is coming yet
+        if not llm_ready.is_set():
+            yield json.dumps({
+                "type": "status",
+                "text": "Preparing the model (first run can take a few minutes)"
+            }) + "\n"
+
         try:
             for text in generate(messages):
                 yield json.dumps({

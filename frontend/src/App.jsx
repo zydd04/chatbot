@@ -218,7 +218,9 @@ export default function App() {
           return;
         }
 
-        if (data.type === "chunk") {
+        if (data.type === "status") {
+          updateLast({ status: data.text });
+        } else if (data.type === "chunk") {
           updateLast((last) => ({ content: last.content + data.text }));
         } else if (data.type === "sources") {
           updateLast({ sources: data.sources });
@@ -353,8 +355,21 @@ export default function App() {
           {history.map((msg, i) => (
             <div key={i} className={`msg ${msg.role}`}>
               <div className="bubble">
-                <pre>{msg.content}</pre>
-                {msg.streaming && <span className="cursor">▍</span>}
+                {msg.streaming && !msg.content ? (
+                  <div className="thinking" role="status">
+                    <span>{msg.status || "Thinking"}</span>
+                    <span className="dots">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <pre>{msg.content}</pre>
+                    {msg.streaming && <span className="cursor">▍</span>}
+                  </>
+                )}
               </div>
 
               {msg.sources?.length > 0 && (
