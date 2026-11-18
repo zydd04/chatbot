@@ -1,14 +1,14 @@
 """Standalone terminal chat against the same vector store the API uses."""
-import os
 import ollama
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 from dotenv import load_dotenv
 
+from config import LLM_MODEL
+
 load_dotenv()
 
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
 per_dir = "db/chromadb"
 
 

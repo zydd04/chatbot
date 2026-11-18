@@ -1,45 +1,18 @@
+"""FastAPI app: HTTP routes only. The work lives in the modules imported below."""
+import json
+import os
+import threading
+from typing import List
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
-import os
-import json
-import time
-import threading
-import uuid
-from langchain_core.documents import Document
-from langchain_community.document_loaders import TextLoader, PyPDFLoader
-from langchain_community.retrievers import BM25Retriever
-import docx2txt
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-
-from sentence_transformers import CrossEncoder
-import ollama
-
-DOCS_PATH = "docs"
-DB_PATH = "db/chromadb"
-EVAL_SET_PATH = "eval/eval_set.json"
-# fixed documents the eval set was written against, kept apart from docs/ so
-# uploading or deleting files in the app can't break the eval
-EVAL_CORPUS_PATH = "eval/corpus"
-REPORT_PATH = "eval/latest_report.json"
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
-SUPPORTED_EXTENSIONS = (".txt", ".pdf", ".docx")
-COLLECTION_METADATA = {"hnsw:space": "cosine"}
-REFUSAL = "i don't have enough information"
-
-# Generation runs on CPU, where reading the prompt is the slow part, so the
-# prompt is kept small: short chunks, few of them, and a short chat history.
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 75
-TOP_N_CHUNKS = 3
-MAX_HISTORY_MESSAGES = 6
-# keep the model in memory between questions instead of reloading it
-LLM_KEEP_ALIVE = "30m"
+import index
+import llm
+from config import DOCS_PATH, REPORT_PATH, SUPPORTED_EXTENSIONS, MAX_HISTORY_MESSAGES
+from evaluation import run_eval
 
 app = FastAPI()
 
@@ -50,20 +23,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-embedding_model = HuggingFaceEmbeddings(
-    model_name="all-MiniLM-L6-v2"
-)
-
-reranker = CrossEncoder(
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
-
-db = None
-bm25_retriever = None
-all_chunks_cache = []
-index_lock = threading.Lock()
-_cold_start_seconds = None
-llm_ready = threading.Event()
 
 class Message(BaseModel):
     role: str
@@ -74,312 +33,52 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Message] = []
 
-class EvalCase(BaseModel):
-    question : str
-    expected_source : str
-    unanswerable_bool : bool
-    expected_keywords: List[str] = []
-
-##File Loading ...
-def load_file(path: str):
-    lower = path.lower()
-
-    if lower.endswith(".txt"):
-        return TextLoader(path, encoding="utf-8").load()
-
-    if lower.endswith(".pdf"):
-        return PyPDFLoader(path).load()
-
-    if lower.endswith(".docx"):
-        text = docx2txt.process(path)
-        return [Document(page_content=text, metadata={"source": path})]
-
-    return []
-
-
-def load_all_docs(folder: str = DOCS_PATH):
-    docs = []
-
-    os.makedirs(folder, exist_ok=True)
-
-    for file in sorted(os.listdir(folder)):
-        path = os.path.join(folder, file)
-        if not os.path.isfile(path):
-            continue
-        try:
-            docs.extend(load_file(path))
-        except Exception as e:
-            # one unreadable file must not take the whole server down
-            print(f"Skipping {path}: {e}")
-
-    return docs
-
-##chunking ...
-
-def split_docs(docs):
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP
-    )
-    return splitter.split_documents(docs)
-
-
-def open_dense():
-    return Chroma(
-        embedding_function=embedding_model,
-        persist_directory=DB_PATH,
-        collection_metadata=COLLECTION_METADATA,
-    )
-
-
-def build_bm25(chunks):
-    if not chunks:
-        return None
-    sparse = BM25Retriever.from_documents(chunks)
-    sparse.k = 8
-    return sparse
-
-
-def build_indexes(force: bool = False):
-    """
-    Hybrid Search: Chroma for dense embedding search,
-    BM25 for keyword search
-    both synched
-
-    The persisted Chroma collection is reused when it already matches the
-    files in docs/, otherwise it is wiped and rebuilt (re-adding on top of an
-    existing collection would duplicate every chunk).
-    """
-    global all_chunks_cache
-
-    chunks = split_docs(load_all_docs())
-    all_chunks_cache = chunks
-
-    dense = open_dense()
-
-    if force or dense._collection.count() != len(chunks):
-        dense.delete_collection()
-        dense = open_dense()
-        if chunks:
-            dense.add_documents(chunks)
-
-    return dense, build_bm25(chunks)
-
-
-def remove_source_from_db(path):
-    """Drop every chunk that came from `path` from both indexes."""
-    global bm25_retriever, all_chunks_cache
-
-    ids = db.get(where={"source": path})["ids"]
-    if ids:
-        db.delete(ids=ids)
-
-    all_chunks_cache = [
-        c for c in all_chunks_cache if c.metadata.get("source") != path
-    ]
-    bm25_retriever = build_bm25(all_chunks_cache)
-
-
-def add_file_to_db(path):
-    global bm25_retriever, all_chunks_cache
-
-    chunks = split_docs(load_file(path))
-    if not chunks:
-        raise ValueError("No readable text found in file")
-
-    # re-uploading a file replaces its old chunks instead of duplicating them
-    remove_source_from_db(path)
-
-    db.add_documents(chunks)
-
-    all_chunks_cache = all_chunks_cache + chunks
-    bm25_retriever = build_bm25(all_chunks_cache)
-
-
-##STARTUP...
-
-def prepare_llm(retries: int = 60, delay: float = 5.0):
-    """
-    Downloads the model if it is missing and loads it into memory, so the
-    first chat message doesn't have to wait for either. Retries because the
-    ollama container may still be starting when the backend comes up.
-    """
-    for _ in range(retries):
-        try:
-            try:
-                ollama.show(LLM_MODEL)
-            except ollama.ResponseError as e:
-                if e.status_code != 404:
-                    raise
-                print(f"Downloading {LLM_MODEL}...")
-                ollama.pull(LLM_MODEL)
-
-            # an empty prompt just loads the model
-            ollama.generate(model=LLM_MODEL, prompt="", keep_alive=LLM_KEEP_ALIVE)
-            llm_ready.set()
-            print(f"{LLM_MODEL} is ready")
-            return
-        except Exception as e:
-            print(f"LLM not ready yet: {e}")
-            time.sleep(delay)
-
 
 @app.on_event("startup")
 def startup():
-    global db, bm25_retriever
-
-    db, bm25_retriever = build_indexes()
-
+    index.build_indexes()
     os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
-
     # in the background so the API is reachable while the model downloads
-    threading.Thread(target=prepare_llm, daemon=True).start()
+    threading.Thread(target=llm.prepare, daemon=True).start()
 
 
-##Hybrid Retrieve + Rerank
-def reciprocal_rank_fusion(ranked_lists, k: int = 60):
-    scores = {}
-    doc_lookup = {}
- 
-    for ranked_docs in ranked_lists:
-        for rank, doc in enumerate(ranked_docs):
-            key = doc.page_content
-            doc_lookup[key] = doc
-            scores[key] = scores.get(key, 0) + 1 / (k + rank + 1)
- 
-    merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    return [doc_lookup[key] for key, _ in merged]
- 
- 
-def retrieve(query: str, k_dense: int = 8, top_n: int = TOP_N_CHUNKS,
-             dense=None, sparse=None):
-    """Searches the app's indexes unless `dense`/`sparse` are given (eval)."""
-    if dense is None:
-        dense, sparse = db, bm25_retriever
-
-    dense_retriever = dense.as_retriever(search_kwargs={"k": k_dense})
-    dense_docs = dense_retriever.invoke(query)
-
-    if sparse is not None:
-        sparse_docs = sparse.invoke(query)
-        docs = reciprocal_rank_fusion([dense_docs, sparse_docs])
-    else:
-        docs = dense_docs
- 
-    if not docs:
-        return []
- 
-    pairs = [[query, d.page_content] for d in docs]
-    scores = reranker.predict(pairs)
- 
-    ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
- 
-    return [d for _, d in ranked[:top_n]]
- 
- 
-##Chat...
-def build_system_prompt(docs) -> str:
-    context = "\n\n".join(
-        f"[Source {i+1}]\n{d.page_content}"
-        for i, d in enumerate(docs)
-    )
-
-    return (
-        "You are a strict retrieval assistant.\n"
-        "Answer ONLY using the provided context.\n"
-        "If the answer is not explicitly contained in the context, "
-        "reply exactly:\n"
-        "I don't have enough information.\n"
-        "Do not use prior knowledge.\n\n"
-        f"Context:\n{context}"
-    )
-
-
-def _ollama_chat(messages):
-    return ollama.chat(
-        model=LLM_MODEL,
-        messages=messages,
-        stream=True,
-        keep_alive=LLM_KEEP_ALIVE,
-    )
-
-
-def _ollama_stream(messages):
-    try:
-        yield from _ollama_chat(messages)
-    except ollama.ResponseError as e:
-        # model not pulled yet (fresh ollama container): pull once and retry.
-        # A 404 is raised before any chunk is produced, so retrying is safe.
-        if e.status_code != 404:
-            raise
-        ollama.pull(LLM_MODEL)
-        yield from _ollama_chat(messages)
-
-
-def generate(messages):
-    """Yields answer text pieces; records time-to-first-token of the first call."""
-    global _cold_start_seconds
-    start = time.time()
-
-    for chunk in _ollama_stream(messages):
-        if _cold_start_seconds is None:
-            _cold_start_seconds = time.time() - start
-        llm_ready.set()
-        text = chunk["message"]["content"]
-        if text:
-            yield text
+def _line(**event) -> str:
+    return json.dumps(event) + "\n"
 
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    docs = retrieve(req.message)
+    docs = index.retrieve(req.message)
 
-    messages = [{"role": "system", "content": build_system_prompt(docs)}]
-
+    messages = [{"role": "system", "content": llm.build_system_prompt(docs)}]
     for m in req.history[-MAX_HISTORY_MESSAGES:]:
         if m.role in ("user", "assistant") and m.content:
             messages.append({"role": m.role, "content": m.content})
-
     messages.append({"role": "user", "content": req.message})
 
     def stream():
         # tell the UI why nothing is coming yet
-        if not llm_ready.is_set():
-            yield json.dumps({
-                "type": "status",
-                "text": "Preparing the model (first run can take a few minutes)"
-            }) + "\n"
+        if not llm.ready.is_set():
+            yield _line(type="status",
+                        text="Preparing the model (first run can take a few minutes)")
 
         try:
-            for text in generate(messages):
-                yield json.dumps({
-                    "type": "chunk",
-                    "text": text
-                }) + "\n"
+            for text in llm.generate(messages):
+                yield _line(type="chunk", text=text)
         except Exception as e:
-            yield json.dumps({
-                "type": "error",
-                "error": f"LLM request failed: {e}"
-            }) + "\n"
-            yield json.dumps({"type": "done"}) + "\n"
+            yield _line(type="error", error=f"LLM request failed: {e}")
+            yield _line(type="done")
             return
 
-        yield json.dumps({
-            "type": "sources",
-            "sources": [
-                {
-                    "file": d.metadata.get("source", "unknown"),
-                    "preview": d.page_content[:200]
-                }
-                for d in docs
-            ]
-        }) + "\n"
-
-        yield json.dumps({"type": "done"}) + "\n"
+        yield _line(type="sources", sources=[
+            {"file": d.metadata.get("source", "unknown"), "preview": d.page_content[:200]}
+            for d in docs
+        ])
+        yield _line(type="done")
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
-##Uploads... (now accepts multiple files in one request)
+
 @app.post("/upload")
 def upload(files: List[UploadFile] = File(...)):
     os.makedirs(DOCS_PATH, exist_ok=True)
@@ -404,14 +103,14 @@ def upload(files: List[UploadFile] = File(...)):
             with open(path, "wb") as f:
                 f.write(file.file.read())
 
-            with index_lock:
-                add_file_to_db(path)
+            with index.lock:
+                index.add_file(path)
             uploaded.append(name)
         except Exception as e:
             # don't leave a file listed that isn't searchable
-            with index_lock:
+            with index.lock:
                 try:
-                    remove_source_from_db(path)
+                    index.remove_source(path)
                 except Exception:
                     pass
             if os.path.exists(path):
@@ -420,162 +119,12 @@ def upload(files: List[UploadFile] = File(...)):
 
     return {"uploaded": uploaded, "failed": failed}
 
-#chat synchronization
-def chat_sync(message: str, dense=None, sparse=None) -> dict:
-    """
-    used by the eval harness to measure latency per request and inspect the full
-    response + sources in one shot.
-    """
-    docs = retrieve(message, dense=dense, sparse=sparse)
 
-    answer = "".join(generate([
-        {"role": "system", "content": build_system_prompt(docs)},
-        {"role": "user", "content": message},
-    ]))
-    sources = [d.metadata.get("source", "unknown") for d in docs]
-
-    return {"answer": answer, "sources": sources}
-
-
-def build_eval_indexes():
-    """
-    Indexes eval/corpus in a throwaway in-memory collection, so the eval
-    always runs against the documents its questions were written for.
-    """
-    chunks = split_docs(load_all_docs(EVAL_CORPUS_PATH))
-    if not chunks:
-        raise ValueError(f"No documents found in {EVAL_CORPUS_PATH}")
-
-    # no persist_directory -> in-memory; unique name so reruns don't collide
-    dense = Chroma(
-        collection_name=f"eval_{uuid.uuid4().hex}",
-        embedding_function=embedding_model,
-        collection_metadata=COLLECTION_METADATA,
-    )
-    dense.add_documents(chunks)
-    return dense, build_bm25(chunks)
-
-
-def _source_name(path: str) -> str:
-    # sources may have been indexed with Windows separators
-    return os.path.basename(path.replace("\\", "/"))
-
-
-#report generating
-def run_eval() -> dict:
-    if not os.path.exists(EVAL_SET_PATH):
-        return {"error": f"No eval set found at {EVAL_SET_PATH}"}
- 
-    with open(EVAL_SET_PATH, encoding="utf-8") as f:
-        raw_cases = json.load(f)
-    cases = [EvalCase(**c) for c in raw_cases]
- 
-    if not cases:
-        return {"error": "Eval set is empty."}
-
-    try:
-        eval_dense, eval_sparse = build_eval_indexes()
-    except Exception as e:
-        return {"error": f"Could not index eval corpus: {e}"}
-
-    retrieval_hits = 0
-    answerable = 0
-    correct = 0
-    hallucinations = 0
-    errors = 0
-    latencies = []
-    case_results = []
-
-    try:
-        for case in cases:
-            start = time.time()
-            try:
-                result = chat_sync(case.question, eval_dense, eval_sparse)
-            except Exception as e:
-                # one failed request shouldn't throw away the whole run
-                errors += 1
-                case_results.append({
-                    "question": case.question,
-                    "error": str(e),
-                })
-                continue
-            elapsed = time.time() - start
-            latencies.append(elapsed)
-
-            answer_lower = result["answer"].lower().replace("’", "'")
-            refused = REFUSAL in answer_lower
-
-            if case.unanswerable_bool:
-                # nothing to retrieve, so these don't count towards recall;
-                # the only correct behaviour is refusing
-                retrieved_hit = None
-                is_correct = refused
-                is_hallucination = not refused
-            else:
-                answerable += 1
-                retrieved_hit = any(
-                    _source_name(s) == case.expected_source for s in result["sources"]
-                )
-                if retrieved_hit:
-                    retrieval_hits += 1
-
-                # every expected keyword must appear (e.g. "when AND where")
-                is_correct = not refused and all(
-                    kw.lower() in answer_lower for kw in case.expected_keywords
-                )
-                if is_correct:
-                    correct += 1
-                # a refusal is a miss, not a hallucination: only an answer
-                # that states something other than the expected facts counts
-                is_hallucination = not refused and not is_correct
-
-            if is_hallucination:
-                hallucinations += 1
-
-            case_results.append({
-                "question": case.question,
-                "answer": result["answer"],
-                "sources": result["sources"],
-                "retrieval_hit": retrieved_hit,
-                "refused": refused,
-                "correct": is_correct,
-                "flagged_hallucination": is_hallucination,
-                "latency_seconds": round(elapsed, 3),
-            })
-    finally:
-        eval_dense.delete_collection()
-
-    latencies.sort()
-    n = len(latencies)
-    p50 = latencies[int(n * 0.5)] if n else None
-    p95 = latencies[min(int(n * 0.95), n - 1)] if n else None
- 
-    report = {
-        "num_cases": len(cases),
-        "num_errors": errors,
-        "k": TOP_N_CHUNKS,
-        "recall_at_k": round(retrieval_hits / answerable, 3) if answerable else None,
-        "answer_accuracy": round(correct / answerable, 3) if answerable else None,
-        "hallucination_rate": round(hallucinations / n, 3) if n else None,
-        "latency_p50_ms": round(p50 * 1000, 1) if p50 is not None else None,
-        "latency_p95_ms": round(p95 * 1000, 1) if p95 is not None else None,
-        "cold_start_seconds": round(_cold_start_seconds, 2) if _cold_start_seconds is not None else None,
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "cases": case_results,
-    }
- 
-    os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
-    with open(REPORT_PATH, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
- 
-    return report
- 
-#run reporting...
 @app.post("/report/run")
 def report_run():
     return run_eval()
 
-#get latest report
+
 @app.get("/report")
 def report_latest():
     """Returns the most recently generated report without re-running eval."""
@@ -584,7 +133,7 @@ def report_latest():
     with open(REPORT_PATH, encoding="utf-8") as f:
         return json.load(f)
 
-##Listing Files..
+
 @app.get("/files")
 def list_files():
     os.makedirs(DOCS_PATH, exist_ok=True)
@@ -595,7 +144,7 @@ def list_files():
         )
     }
 
-##Delete...
+
 @app.delete("/files/{filename}")
 def delete_file(filename: str):
     name = os.path.basename(filename)
@@ -604,8 +153,8 @@ def delete_file(filename: str):
     if not name or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")
 
-    with index_lock:
+    with index.lock:
         os.remove(path)
-        remove_source_from_db(path)
+        index.remove_source(path)
 
     return {"message": "deleted"}
