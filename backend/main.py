@@ -7,6 +7,7 @@ import os
 import json
 import time
 import threading
+import uuid
 from langchain_core.documents import Document
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
@@ -22,8 +23,11 @@ import ollama
 DOCS_PATH = "docs"
 DB_PATH = "db/chromadb"
 EVAL_SET_PATH = "eval/eval_set.json"
+# fixed documents the eval set was written against, kept apart from docs/ so
+# uploading or deleting files in the app can't break the eval
+EVAL_CORPUS_PATH = "eval/corpus"
 REPORT_PATH = "eval/latest_report.json"
-LLM_MODEL = "qwen2.5:0.5b"
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
 SUPPORTED_EXTENSIONS = (".txt", ".pdf", ".docx")
 COLLECTION_METADATA = {"hnsw:space": "cosine"}
 REFUSAL = "i don't have enough information"
@@ -93,13 +97,13 @@ def load_file(path: str):
     return []
 
 
-def load_all_docs():
+def load_all_docs(folder: str = DOCS_PATH):
     docs = []
 
-    os.makedirs(DOCS_PATH, exist_ok=True)
+    os.makedirs(folder, exist_ok=True)
 
-    for file in sorted(os.listdir(DOCS_PATH)):
-        path = os.path.join(DOCS_PATH, file)
+    for file in sorted(os.listdir(folder)):
+        path = os.path.join(folder, file)
         if not os.path.isfile(path):
             continue
         try:
@@ -247,12 +251,17 @@ def reciprocal_rank_fusion(ranked_lists, k: int = 60):
     return [doc_lookup[key] for key, _ in merged]
  
  
-def retrieve(query: str, k_dense: int = 8, k_sparse: int = 8, top_n: int = TOP_N_CHUNKS):
-    dense_retriever = db.as_retriever(search_kwargs={"k": k_dense})
+def retrieve(query: str, k_dense: int = 8, top_n: int = TOP_N_CHUNKS,
+             dense=None, sparse=None):
+    """Searches the app's indexes unless `dense`/`sparse` are given (eval)."""
+    if dense is None:
+        dense, sparse = db, bm25_retriever
+
+    dense_retriever = dense.as_retriever(search_kwargs={"k": k_dense})
     dense_docs = dense_retriever.invoke(query)
- 
-    if bm25_retriever is not None:
-        sparse_docs = bm25_retriever.invoke(query)
+
+    if sparse is not None:
+        sparse_docs = sparse.invoke(query)
         docs = reciprocal_rank_fusion([dense_docs, sparse_docs])
     else:
         docs = dense_docs
@@ -412,12 +421,12 @@ def upload(files: List[UploadFile] = File(...)):
     return {"uploaded": uploaded, "failed": failed}
 
 #chat synchronization
-def chat_sync(message: str) -> dict:
+def chat_sync(message: str, dense=None, sparse=None) -> dict:
     """
     used by the eval harness to measure latency per request and inspect the full
     response + sources in one shot.
     """
-    docs = retrieve(message)
+    docs = retrieve(message, dense=dense, sparse=sparse)
 
     answer = "".join(generate([
         {"role": "system", "content": build_system_prompt(docs)},
@@ -426,6 +435,31 @@ def chat_sync(message: str) -> dict:
     sources = [d.metadata.get("source", "unknown") for d in docs]
 
     return {"answer": answer, "sources": sources}
+
+
+def build_eval_indexes():
+    """
+    Indexes eval/corpus in a throwaway in-memory collection, so the eval
+    always runs against the documents its questions were written for.
+    """
+    chunks = split_docs(load_all_docs(EVAL_CORPUS_PATH))
+    if not chunks:
+        raise ValueError(f"No documents found in {EVAL_CORPUS_PATH}")
+
+    # no persist_directory -> in-memory; unique name so reruns don't collide
+    dense = Chroma(
+        collection_name=f"eval_{uuid.uuid4().hex}",
+        embedding_function=embedding_model,
+        collection_metadata=COLLECTION_METADATA,
+    )
+    dense.add_documents(chunks)
+    return dense, build_bm25(chunks)
+
+
+def _source_name(path: str) -> str:
+    # sources may have been indexed with Windows separators
+    return os.path.basename(path.replace("\\", "/"))
+
 
 #report generating
 def run_eval() -> dict:
@@ -438,62 +472,90 @@ def run_eval() -> dict:
  
     if not cases:
         return {"error": "Eval set is empty."}
- 
+
+    try:
+        eval_dense, eval_sparse = build_eval_indexes()
+    except Exception as e:
+        return {"error": f"Could not index eval corpus: {e}"}
+
     retrieval_hits = 0
     answerable = 0
+    correct = 0
     hallucinations = 0
+    errors = 0
     latencies = []
     case_results = []
- 
-    for case in cases:
-        start = time.time()
-        result = chat_sync(case.question)
-        elapsed = time.time() - start
-        latencies.append(elapsed)
- 
-        # unanswerable cases have no source to find, so they don't count
-        # towards recall
-        if case.unanswerable_bool:
-            retrieved_hit = None
-        else:
-            answerable += 1
-            retrieved_hit = any(case.expected_source in s for s in result["sources"])
-            if retrieved_hit:
-                retrieval_hits += 1
- 
-        answer_lower = result["answer"].lower().replace("\u2019", "'")
-        refused = REFUSAL in answer_lower
- 
-        if case.unanswerable_bool and not refused:
-            is_hallucination = True
-        else:
-            if not case.expected_keywords:
-                is_hallucination = False
+
+    try:
+        for case in cases:
+            start = time.time()
+            try:
+                result = chat_sync(case.question, eval_dense, eval_sparse)
+            except Exception as e:
+                # one failed request shouldn't throw away the whole run
+                errors += 1
+                case_results.append({
+                    "question": case.question,
+                    "error": str(e),
+                })
+                continue
+            elapsed = time.time() - start
+            latencies.append(elapsed)
+
+            answer_lower = result["answer"].lower().replace("’", "'")
+            refused = REFUSAL in answer_lower
+
+            if case.unanswerable_bool:
+                # nothing to retrieve, so these don't count towards recall;
+                # the only correct behaviour is refusing
+                retrieved_hit = None
+                is_correct = refused
+                is_hallucination = not refused
             else:
-                is_hallucination = not any(
+                answerable += 1
+                retrieved_hit = any(
+                    _source_name(s) == case.expected_source for s in result["sources"]
+                )
+                if retrieved_hit:
+                    retrieval_hits += 1
+
+                # every expected keyword must appear (e.g. "when AND where")
+                is_correct = not refused and all(
                     kw.lower() in answer_lower for kw in case.expected_keywords
                 )
- 
-        if is_hallucination:
-            hallucinations += 1
- 
-        case_results.append({
-            "question": case.question,
-            "answer": result["answer"],
-            "sources": result["sources"],
-            "retrieval_hit": retrieved_hit,
-            "flagged_hallucination": is_hallucination,
-            "latency_seconds": round(elapsed, 3),
-        })
- 
+                if is_correct:
+                    correct += 1
+                # a refusal is a miss, not a hallucination: only an answer
+                # that states something other than the expected facts counts
+                is_hallucination = not refused and not is_correct
+
+            if is_hallucination:
+                hallucinations += 1
+
+            case_results.append({
+                "question": case.question,
+                "answer": result["answer"],
+                "sources": result["sources"],
+                "retrieval_hit": retrieved_hit,
+                "refused": refused,
+                "correct": is_correct,
+                "flagged_hallucination": is_hallucination,
+                "latency_seconds": round(elapsed, 3),
+            })
+    finally:
+        eval_dense.delete_collection()
+
     latencies.sort()
     n = len(latencies)
     p50 = latencies[int(n * 0.5)] if n else None
     p95 = latencies[min(int(n * 0.95), n - 1)] if n else None
  
     report = {
-        "num_cases": n,
-        "recall_at_10": round(retrieval_hits / answerable, 3) if answerable else None,
+        "num_cases": len(cases),
+        "num_errors": errors,
+        "k": TOP_N_CHUNKS,
+        "recall_at_k": round(retrieval_hits / answerable, 3) if answerable else None,
+        "answer_accuracy": round(correct / answerable, 3) if answerable else None,
         "hallucination_rate": round(hallucinations / n, 3) if n else None,
         "latency_p50_ms": round(p50 * 1000, 1) if p50 is not None else None,
         "latency_p95_ms": round(p95 * 1000, 1) if p95 is not None else None,

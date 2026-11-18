@@ -326,8 +326,12 @@ export default function App() {
                 <span>{report.num_cases}</span>
               </div>
               <div className="report-row">
-                <span>Retrieval recall</span>
-                <span>{report.recall_at_10 != null ? `${(report.recall_at_10 * 100).toFixed(0)}%` : "—"}</span>
+                <span>Retrieval recall{report.k != null ? `@${report.k}` : ""}</span>
+                <span>{report.recall_at_k != null ? `${(report.recall_at_k * 100).toFixed(0)}%` : "—"}</span>
+              </div>
+              <div className="report-row">
+                <span>Answer accuracy</span>
+                <span>{report.answer_accuracy != null ? `${(report.answer_accuracy * 100).toFixed(0)}%` : "—"}</span>
               </div>
               <div className="report-row">
                 <span>Hallucination rate</span>
@@ -345,6 +349,12 @@ export default function App() {
                 <span>Cold start</span>
                 <span>{report.cold_start_seconds != null ? `${report.cold_start_seconds}s` : "not captured"}</span>
               </div>
+              {report.num_errors > 0 && (
+                <div className="report-row">
+                  <span>Errored cases</span>
+                  <span>{report.num_errors}</span>
+                </div>
+              )}
               <div className="report-timestamp">Generated {report.generated_at}</div>
             </div>
           )}

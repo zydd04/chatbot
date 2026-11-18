@@ -87,7 +87,7 @@
     "question": "How many career goals had Messi scored as of the article, and how many assists?",
     "expected_source": "messi.txt",
     "unanswerable_bool": false,
-    "expected_keywords": ["910", "410"]
+    "expected_keywords": ["930", "420"]
   },
   {
     "question": "When was OpenAI founded and in what US state?",
