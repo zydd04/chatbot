@@ -9,13 +9,12 @@ EVAL_SET_PATH = "eval/eval_set.json"
 EVAL_CORPUS_PATH = "eval/corpus"
 REPORT_PATH = "eval/latest_report.json"
 
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:0.5b")
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 SUPPORTED_EXTENSIONS = (".txt", ".pdf", ".docx")
 COLLECTION_METADATA = {"hnsw:space": "cosine"}
-REFUSAL = "i don't have enough information"
 
 # Generation runs on CPU, where reading the prompt is the slow part, so the
 # prompt is kept small: short chunks, few of them, and a short chat history.

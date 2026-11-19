@@ -1,9 +1,11 @@
 """Eval harness: runs eval/eval_set.json against eval/corpus and scores it."""
 import json
 import os
+import re
 import time
+import unicodedata
 import uuid
-from typing import List
+from typing import List, Union
 
 from langchain_chroma import Chroma
 from pydantic import BaseModel
@@ -12,7 +14,7 @@ import index
 import llm
 from config import (
     EVAL_SET_PATH, EVAL_CORPUS_PATH, REPORT_PATH, COLLECTION_METADATA,
-    REFUSAL, TOP_N_CHUNKS,
+    TOP_N_CHUNKS,
 )
 from documents import load_all_docs, split_docs
 
@@ -21,7 +23,45 @@ class EvalCase(BaseModel):
     question: str
     expected_source: str
     unanswerable_bool: bool
-    expected_keywords: List[str] = []
+    # every entry must appear in the answer; an entry that is a list is a set
+    # of alternatives, any one of which is enough (e.g. ["eight", "8"])
+    expected_keywords: List[Union[str, List[str]]] = []
+
+
+# ways a small model says "it's not in the context" besides the exact phrase
+# the prompt asks for; matched against normalized text (see _normalize)
+REFUSAL_PATTERNS = [
+    r"\b(do not|dont|does not|doesnt) have enough information\b",
+    r"\bnot enough information\b",
+    r"\b(is|are|was|were|isnt|arent)? ?not (explicitly )?"
+    r"(stated|mentioned|provided|specified|given|included|contained|available)\b",
+    r"\b(no|not any) (mention|information|data|details?)\b",
+    r"\b(does not|doesnt|do not|dont) (say|state|mention|specify|provide|contain|include)\b",
+    r"\b(cannot|can not|cant|unable to) (answer|determine|find|tell|say)\b",
+]
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, drop accents and punctuation, collapse spaces."""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower().replace("’", "'").replace("'", "")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return f" {text.strip()} "
+
+
+def _contains(normalized_answer: str, keyword: str) -> bool:
+    # whole words only, so "26" doesn't match "260"
+    return f" {_normalize(keyword).strip()} " in normalized_answer
+
+
+def _matches(normalized_answer: str, expected) -> bool:
+    alternatives = [expected] if isinstance(expected, str) else expected
+    return any(_contains(normalized_answer, alt) for alt in alternatives)
+
+
+def _is_refusal(normalized_answer: str) -> bool:
+    return any(re.search(p, normalized_answer) for p in REFUSAL_PATTERNS)
 
 
 def chat_sync(message: str, dense=None, sparse=None) -> dict:
@@ -62,22 +102,24 @@ def _source_name(path: str) -> str:
 
 
 def score_case(case: EvalCase, result: dict) -> dict:
-    answer_lower = result["answer"].lower().replace("’", "'")
-    refused = REFUSAL in answer_lower
+    answer = _normalize(result["answer"])
 
     if case.unanswerable_bool:
         # nothing to retrieve, so these don't count towards recall;
         # the only correct behaviour is refusing
         retrieval_hit = None
+        refused = _is_refusal(answer)
         is_correct = refused
     else:
         retrieval_hit = any(
             _source_name(s) == case.expected_source for s in result["sources"]
         )
-        # every expected keyword must appear (e.g. "when AND where")
-        is_correct = not refused and all(
-            kw.lower() in answer_lower for kw in case.expected_keywords
+        # every expected keyword must appear (e.g. "when AND where"); an
+        # answer that has them all is correct even if it also hedges
+        is_correct = bool(case.expected_keywords) and all(
+            _matches(answer, kw) for kw in case.expected_keywords
         )
+        refused = not is_correct and _is_refusal(answer)
 
     return {
         "question": case.question,
