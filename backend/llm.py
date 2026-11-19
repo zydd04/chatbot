@@ -4,7 +4,7 @@ import time
 
 import ollama
 
-from config import LLM_MODEL, LLM_KEEP_ALIVE
+from config import LLM_MODEL, LLM_KEEP_ALIVE, LLM_TEMPERATURE
 
 # set once the model has answered (or been loaded), so the UI can say why
 # the first reply is slow
@@ -62,6 +62,7 @@ def _chat(messages):
         messages=messages,
         stream=True,
         keep_alive=LLM_KEEP_ALIVE,
+        options={"temperature": LLM_TEMPERATURE},
     )
 
 

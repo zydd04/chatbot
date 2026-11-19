@@ -22,5 +22,8 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 75
 TOP_N_CHUNKS = 3
 MAX_HISTORY_MESSAGES = 6
+# 0 = always pick the most likely next token: answers stick closer to the
+# context, and the same question gives the same answer (repeatable evals)
+LLM_TEMPERATURE = 0
 # keep the model in memory between questions instead of reloading it
 LLM_KEEP_ALIVE = "30m"

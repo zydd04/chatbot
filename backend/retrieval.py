@@ -5,7 +5,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 from dotenv import load_dotenv
 
-from config import LLM_MODEL
+from config import LLM_MODEL, LLM_TEMPERATURE
 
 load_dotenv()
 
@@ -25,7 +25,11 @@ def generate_answer(query, docs, chat_history):
     messages.extend(chat_history[-20:])
     messages.append({"role": "user", "content": query})
 
-    response = ollama.chat(model=LLM_MODEL, messages=messages)
+    response = ollama.chat(
+        model=LLM_MODEL,
+        messages=messages,
+        options={"temperature": LLM_TEMPERATURE},
+    )
     return response.message.content
 
 
